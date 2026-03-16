@@ -1,0 +1,34 @@
+{
+  "users": [
+    {
+      "id": "admin-1",
+      "username": "admin",
+      "password": "password",
+      "role": "ADMIN",
+      "status": "ACTIVE",
+      "capital": 0,
+      "availableCapital": 0,
+      "createdAt": "2026-03-06T00:00:00.000Z"
+    },
+    {
+      "id": "client-1772794992483",
+      "username": "rushi",
+      "password": "250250",
+      "role": "CLIENT",
+      "status": "DISABLED",
+      "capital": 100000000,
+      "availableCapital": 255061196,
+      "createdAt": "2026-03-06T11:03:12.483Z"
+    },
+    {
+      "id": "client-1772795225546",
+      "username": "test",
+      "password": "250250",
+      "role": "CLIENT",
+      "status": "ACTIVE",
+      "capital": 1000000,
+      "availableCapital": 934691,
+      "createdAt": "2026-03-06T11:07:05.546Z"
+    }
+  ]
+}

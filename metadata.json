@@ -1,0 +1,5 @@
+{
+  "name": "MyProfit365 Clone",
+  "description": "A high-fidelity stock trading terminal interface featuring real-time market data from Upstox and a dark-themed UI.",
+  "requestFramePermissions": []
+}

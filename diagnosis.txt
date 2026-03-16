@@ -1,0 +1,41 @@
+--- Angel One Diagnostic ---
+API_KEY Present: true
+CLIENT_CODE: M342785
+TOTP_KEY Present: true
+Generated TOTP: 332016
+Attempting generateSession...
+Login Successful!
+Feed Token: Present
+JWT Token: Present
+Fetching Profile...
+Profile Data: {
+  "status": true,
+  "message": "SUCCESS",
+  "errorcode": "",
+  "data": {
+    "clientcode": "M342785",
+    "name": "MASRANI RUSHI VIMALBHAI",
+    "email": "",
+    "mobileno": "",
+    "exchanges": [
+      "nse_fo",
+      "nse_cm",
+      "cde_fo",
+      "ncx_fo",
+      "bse_fo",
+      "bse_cm",
+      "mcx_fo"
+    ],
+    "products": [
+      "MARGIN",
+      "MIS",
+      "NRML",
+      "CNC",
+      "CO",
+      "BO"
+    ],
+    "lastlogintime": "",
+    "broker": ""
+  }
+}
+SmartAPI Methods: [ 'constructor' ]

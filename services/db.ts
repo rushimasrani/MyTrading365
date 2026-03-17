@@ -4,12 +4,19 @@ import dotenv from "dotenv";
 // Ensure environment variables are loaded
 dotenv.config();
 
+// Pool configuration supporting both individual variables or a single connection string
+const isProduction = process.env.NODE_ENV === 'production';
+
 export const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT) || 5432,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    connectionString: process.env.DATABASE_URL,
+    host: process.env.DATABASE_URL ? undefined : process.env.DB_HOST,
+    port: process.env.DATABASE_URL ? undefined : (Number(process.env.DB_PORT) || 5432),
+    user: process.env.DATABASE_URL ? undefined : process.env.DB_USER,
+    password: process.env.DATABASE_URL ? undefined : process.env.DB_PASSWORD,
+    database: process.env.DATABASE_URL ? undefined : process.env.DB_NAME,
+    ssl: process.env.DB_SSL === 'true' || process.env.DATABASE_URL?.includes('sslmode=')
+        ? { rejectUnauthorized: false }
+        : false,
 });
 
 // Test the connection pool synchronously

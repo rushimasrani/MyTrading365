@@ -151,7 +151,7 @@ export const getTrades = async (): Promise<TradeRecord[]> => {
         scrip: r.instrument,
         token: r.token,
         tQty: Number(r.quantity),
-        tPrice: Number(r.execution_price),
+        tPrice: Number(r.executed_price),
         account: r.username || r.user_id,
         oid: r.oid,
         tid: r.tid,
@@ -173,7 +173,7 @@ export const getTradesForUser = async (accountId: string): Promise<TradeRecord[]
         scrip: r.instrument,
         token: r.token,
         tQty: Number(r.quantity),
-        tPrice: Number(r.execution_price),
+        tPrice: Number(r.executed_price),
         account: r.username || r.user_id,
         oid: r.oid,
         tid: r.tid,
@@ -186,12 +186,12 @@ export const getTradesForUser = async (accountId: string): Promise<TradeRecord[]
 export const executeTradeTransaction = async (trade: TradeRecord, marginImpact: number) => {
     await query('BEGIN');
     try {
-        // 1. Insert into order_book
+        // 1. Insert into order_book (remaining_qty = 0 for executed trades)
         await query(`
-            INSERT INTO order_book (id, user_id, instrument, token, quantity, price, execution_price, side, order_type, status, exch, oid, tid, eTrdNum, eOrdNum, account_name)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            INSERT INTO order_book (id, user_id, instrument, token, quantity, price, executed_price, side, order_type, status, exchange, oid, tid, exch, eTrdNum, eOrdNum, account_name, remaining_qty)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 0)
         `, [
-            trade.id, trade.account, trade.scrip, trade.token, trade.tQty, trade.tPrice, trade.tPrice, trade.action, 'MARKET', 'EXECUTED', trade.exch, trade.oid, trade.tid, trade.eTrdNum, trade.eOrdNum, trade.account
+            trade.id, trade.account, trade.scrip, trade.token, trade.tQty, trade.tPrice, trade.tPrice, trade.action, 'MARKET', 'EXECUTED', trade.exch || 'NSE_FO', trade.oid, trade.tid, trade.exch, trade.eTrdNum, trade.eOrdNum, trade.account
         ]);
 
         // 2. Insert into trade_history

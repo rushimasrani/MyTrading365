@@ -466,10 +466,15 @@ async function squareOffClient(clientId: string) {
 }
 
 app.post('/api/admin/clients/:id/squareoff', async (req, res) => {
-  const { id } = req.params;
-  const result = await squareOffClient(id);
-  if (!result.success) return res.status(404).json({ error: result.error });
-  res.json(result);
+  try {
+    const { id } = req.params;
+    const result = await squareOffClient(id);
+    if (!result.success) return res.status(404).json({ error: result.error });
+    res.json(result);
+  } catch (error: any) {
+    console.error('[SQUARE-OFF] Unhandled error:', error);
+    res.status(500).json({ error: 'Square-off failed', details: error?.message || 'Internal server error' });
+  }
 });
 
 // RMS Limit Administration Routes
@@ -651,10 +656,10 @@ async function validateRMS(accountId: string, stock: { id: string; exchange?: st
 }
 
 // Helper: Execute an order (creates trade record + updates position + updates order status)
-async function executeOrder(orderId: string, accountId: string, instrument: string, token: string, side: 'BUY' | 'SELL', qty: number, executionPrice: number) {
+async function executeOrder(orderId: string, accountId: string, instrument: string, token: string, side: 'BUY' | 'SELL', qty: number, executionPrice: number, exchange: string = 'NSE_FO') {
   const trade = {
     id: Math.random().toString(36).substr(2, 9),
-    exch: 'FONSE',
+    exch: exchange,
     action: side,
     scrip: instrument,
     token: token,
@@ -674,101 +679,142 @@ async function executeOrder(orderId: string, accountId: string, instrument: stri
 }
 
 app.post('/api/trade/order', async (req, res) => {
-  const { accountId, stock, type, orderType } = req.body;
-  const qty = Number(req.body.qty);
-  const limitPrice = Number(req.body.price) || 0;
+  try {
+    const { accountId, stock, type, orderType } = req.body;
+    const qty = Number(req.body.qty);
+    const limitPrice = Number(req.body.price) || 0;
 
-  const user = await getUserById(accountId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (user.status === 'DISABLED') return res.status(403).json({ error: 'Account disabled' });
+    const user = await getUserById(accountId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.status === 'DISABLED') return res.status(403).json({ error: 'Account disabled' });
 
-  const liveQuote = latestMarketData[stock.id];
-  if (!liveQuote) {
-    return res.status(400).json({ error: 'Live market data unavailable for this instrument.' });
-  }
+    const liveQuote = latestMarketData[stock.id];
+    if (!liveQuote) {
+      return res.status(400).json({ error: 'Live market data unavailable for this instrument.' });
+    }
 
-  const orderId = Math.random().toString(36).substr(2, 9);
-  const oid = Math.random().toString().substr(2, 6);
+    const orderId = Math.random().toString(36).substr(2, 9);
+    const oid = Math.random().toString().substr(2, 6);
 
-  // ===== Trading Session Validation =====
-  const sessionError = validateTradingSession(stock.exchange || 'NSE_FO');
-  if (sessionError) {
-    const orderRecord = await createOrder({
-      id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-      exchange: stock.exchange || 'FONSE', side: type, orderType: orderType || 'MARKET',
-      quantity: qty, price: limitPrice, status: 'REJECTED',
-      accountName: user.username, oid, rejectReason: sessionError
-    });
-    console.log(`[ORDER] REJECTED ${type} ${stock.dispName} x${qty}: ${sessionError}`);
-    const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
-    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
-    return res.json({ orderId: orderRecord.id, orderStatus: 'REJECTED', order: orderRecord, error: sessionError });
-  }
+    // ===== Trading Session Validation =====
+    const resolvedExchange = stock.exchange || stock.exch || stock.segment || 'NSE_FO';
 
-  // ===== MARKET ORDER: Execute immediately =====
-  if (!orderType || orderType === 'MARKET') {
-    let executionPrice = 0;
-    if (type === 'BUY') {
-      if (!liveQuote.ask || liveQuote.ask <= 0) {
-        return res.status(400).json({ error: 'No Ask price available (Market Depth empty or Illiquid).' });
+    // Input validation — prevent null inserts
+    if (!stock.id) return res.status(400).json({ error: 'Missing instrument token.' });
+    if (!stock.dispName) return res.status(400).json({ error: 'Missing instrument name.' });
+    if (!qty || qty <= 0) return res.status(400).json({ error: 'Invalid quantity.' });
+
+    const sessionError = validateTradingSession(resolvedExchange);
+    if (sessionError) {
+      const orderRecord = await createOrder({
+        id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
+        exchange: resolvedExchange, side: type, orderType: orderType || 'MARKET',
+        quantity: qty, price: limitPrice, status: 'REJECTED',
+        accountName: user.username, oid, rejectReason: sessionError
+      });
+      console.log(`[ORDER] REJECTED ${type} ${stock.dispName} x${qty}: ${sessionError}`);
+      const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
+      wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
+      return res.json({ orderId: orderRecord.id, orderStatus: 'REJECTED', order: orderRecord, error: sessionError });
+    }
+
+    // ===== MARKET ORDER: Execute immediately =====
+    if (!orderType || orderType === 'MARKET') {
+      let executionPrice = 0;
+      if (type === 'BUY') {
+        if (!liveQuote.ask || liveQuote.ask <= 0) {
+          return res.status(400).json({ error: 'No Ask price available (Market Depth empty or Illiquid).' });
+        }
+        executionPrice = liveQuote.ask;
+      } else {
+        if (!liveQuote.bid || liveQuote.bid <= 0) {
+          return res.status(400).json({ error: 'No Bid price available (Market Depth empty or Illiquid).' });
+        }
+        executionPrice = liveQuote.bid;
       }
-      executionPrice = liveQuote.ask;
-    } else {
-      if (!liveQuote.bid || liveQuote.bid <= 0) {
-        return res.status(400).json({ error: 'No Bid price available (Market Depth empty or Illiquid).' });
+
+      const rmsError = await validateRMS(accountId, stock, type, qty, executionPrice);
+      if (rmsError) return res.status(403).json({ error: rmsError });
+
+      // Create order record as EXECUTED
+      const orderRecord = await createOrder({
+        id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
+        exchange: resolvedExchange, side: type, orderType: 'MARKET',
+        quantity: qty, price: 0, executedPrice: executionPrice,
+        status: 'EXECUTED', accountName: user.username, oid
+      });
+
+      // Execute the trade
+      const trade = await executeOrder(orderId, accountId, stock.dispName, stock.id, type, qty, executionPrice, resolvedExchange);
+
+      // Broadcast order update
+      const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
+      wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
+
+      return res.json({ ...trade, orderId: orderRecord.id, orderStatus: 'EXECUTED' });
+    }
+
+    // ===== LIMIT ORDER: Create as PENDING or REJECTED =====
+    if (orderType === 'LIMIT') {
+      if (!limitPrice || limitPrice <= 0) {
+        return res.status(400).json({ error: 'Invalid limit price.' });
       }
-      executionPrice = liveQuote.bid;
-    }
 
-    const rmsError = await validateRMS(accountId, stock, type, qty, executionPrice);
-    if (rmsError) return res.status(403).json({ error: rmsError });
+      // Calculate required margin for this order
+      const requiredMargin = limitPrice * qty;
 
-    // Create order record as EXECUTED
-    const orderRecord = await createOrder({
-      id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-      exchange: stock.exchange || 'FONSE', side: type, orderType: 'MARKET',
-      quantity: qty, price: 0, executedPrice: executionPrice,
-      status: 'EXECUTED', accountName: user.username, oid
-    });
+      // Check if limit order can be filled immediately
+      let canFillNow = false;
+      let fillPrice = 0;
+      if (type === 'BUY' && liveQuote.ask > 0 && liveQuote.ask <= limitPrice) {
+        canFillNow = true;
+        fillPrice = liveQuote.ask;
+      } else if (type === 'SELL' && liveQuote.bid > 0 && liveQuote.bid >= limitPrice) {
+        canFillNow = true;
+        fillPrice = liveQuote.bid;
+      }
 
-    // Execute the trade
-    const trade = await executeOrder(orderId, accountId, stock.dispName, stock.id, type, qty, executionPrice);
+      if (canFillNow) {
+        // Validate RMS for immediate execution
+        const rmsError = await validateRMS(accountId, stock, type, qty, fillPrice);
+        if (rmsError) {
+          // Create REJECTED order record
+          const orderRecord = await createOrder({
+            id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
+            exchange: resolvedExchange, side: type, orderType: 'LIMIT',
+            quantity: qty, price: limitPrice, status: 'REJECTED',
+            accountName: user.username, oid, rejectReason: rmsError
+          });
+          console.log(`[ORDER] REJECTED ${type} LIMIT ${stock.dispName} x${qty} @ ${limitPrice}: ${rmsError}`);
+          const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
+          wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
+          return res.json({ orderId: orderRecord.id, orderStatus: 'REJECTED', order: orderRecord, error: rmsError });
+        }
 
-    // Broadcast order update
-    const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
-    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
-
-    return res.json({ ...trade, orderId: orderRecord.id, orderStatus: 'EXECUTED' });
-  }
-
-  // ===== LIMIT ORDER: Create as PENDING or REJECTED =====
-  if (orderType === 'LIMIT') {
-    if (!limitPrice || limitPrice <= 0) {
-      return res.status(400).json({ error: 'Invalid limit price.' });
-    }
-
-    // Calculate required margin for this order
-    const requiredMargin = limitPrice * qty;
-
-    // Check if limit order can be filled immediately
-    let canFillNow = false;
-    let fillPrice = 0;
-    if (type === 'BUY' && liveQuote.ask > 0 && liveQuote.ask <= limitPrice) {
-      canFillNow = true;
-      fillPrice = liveQuote.ask;
-    } else if (type === 'SELL' && liveQuote.bid > 0 && liveQuote.bid >= limitPrice) {
-      canFillNow = true;
-      fillPrice = liveQuote.bid;
-    }
-
-    if (canFillNow) {
-      // Validate RMS for immediate execution
-      const rmsError = await validateRMS(accountId, stock, type, qty, fillPrice);
-      if (rmsError) {
-        // Create REJECTED order record
+        // Execute immediately
         const orderRecord = await createOrder({
           id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-          exchange: stock.exchange || 'FONSE', side: type, orderType: 'LIMIT',
+          exchange: resolvedExchange, side: type, orderType: 'LIMIT',
+          quantity: qty, price: limitPrice, executedPrice: fillPrice,
+          status: 'EXECUTED', accountName: user.username, oid
+        });
+
+        const trade = await executeOrder(orderId, accountId, stock.dispName, stock.id, type, qty, fillPrice, resolvedExchange);
+
+        const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
+        wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
+
+        return res.json({ ...trade, orderId: orderRecord.id, orderStatus: 'EXECUTED' });
+      }
+
+      // --- PENDING LIMIT ORDER: Block margin ---
+      // RMS validation (includes blocked margin check)
+      const rmsError = await validateRMS(accountId, stock, type, qty, limitPrice);
+      if (rmsError) {
+        // Create REJECTED order record with reason
+        const orderRecord = await createOrder({
+          id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
+          exchange: resolvedExchange, side: type, orderType: 'LIMIT',
           quantity: qty, price: limitPrice, status: 'REJECTED',
           accountName: user.username, oid, rejectReason: rmsError
         });
@@ -778,57 +824,28 @@ app.post('/api/trade/order', async (req, res) => {
         return res.json({ orderId: orderRecord.id, orderStatus: 'REJECTED', order: orderRecord, error: rmsError });
       }
 
-      // Execute immediately
+      // Place as PENDING with blocked margin
       const orderRecord = await createOrder({
         id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-        exchange: stock.exchange || 'FONSE', side: type, orderType: 'LIMIT',
-        quantity: qty, price: limitPrice, executedPrice: fillPrice,
-        status: 'EXECUTED', accountName: user.username, oid
+        exchange: resolvedExchange, side: type, orderType: 'LIMIT',
+        quantity: qty, price: limitPrice, status: 'PENDING',
+        accountName: user.username, oid, blockedMargin: requiredMargin
       });
 
-      const trade = await executeOrder(orderId, accountId, stock.dispName, stock.id, type, qty, fillPrice);
+      console.log(`[ORDER] PENDING ${type} LIMIT ${stock.dispName} x${qty} @ ${limitPrice} | Margin Blocked: ₹${requiredMargin.toFixed(2)}`);
 
+      // Broadcast order update
       const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
       wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
 
-      return res.json({ ...trade, orderId: orderRecord.id, orderStatus: 'EXECUTED' });
+      return res.json({ orderId: orderRecord.id, orderStatus: 'PENDING', order: orderRecord });
     }
 
-    // --- PENDING LIMIT ORDER: Block margin ---
-    // RMS validation (includes blocked margin check)
-    const rmsError = await validateRMS(accountId, stock, type, qty, limitPrice);
-    if (rmsError) {
-      // Create REJECTED order record with reason
-      const orderRecord = await createOrder({
-        id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-        exchange: stock.exchange || 'FONSE', side: type, orderType: 'LIMIT',
-        quantity: qty, price: limitPrice, status: 'REJECTED',
-        accountName: user.username, oid, rejectReason: rmsError
-      });
-      console.log(`[ORDER] REJECTED ${type} LIMIT ${stock.dispName} x${qty} @ ${limitPrice}: ${rmsError}`);
-      const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
-      wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
-      return res.json({ orderId: orderRecord.id, orderStatus: 'REJECTED', order: orderRecord, error: rmsError });
-    }
-
-    // Place as PENDING with blocked margin
-    const orderRecord = await createOrder({
-      id: orderId, userId: accountId, instrument: stock.dispName, token: stock.id,
-      exchange: stock.exchange || 'FONSE', side: type, orderType: 'LIMIT',
-      quantity: qty, price: limitPrice, status: 'PENDING',
-      accountName: user.username, oid, blockedMargin: requiredMargin
-    });
-
-    console.log(`[ORDER] PENDING ${type} LIMIT ${stock.dispName} x${qty} @ ${limitPrice} | Margin Blocked: ₹${requiredMargin.toFixed(2)}`);
-
-    // Broadcast order update
-    const wsMsg = JSON.stringify({ type: 'order_update', order: orderRecord, accountId });
-    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(wsMsg); });
-
-    return res.json({ orderId: orderRecord.id, orderStatus: 'PENDING', order: orderRecord });
+    return res.status(400).json({ error: 'Invalid order type.' });
+  } catch (error: any) {
+    console.error('[ORDER] Unhandled error:', error);
+    return res.status(500).json({ error: 'Order execution failed', details: error?.message || 'Internal server error' });
   }
-
-  return res.status(400).json({ error: 'Invalid order type.' });
 });
 
 // Order Book APIs
@@ -951,7 +968,7 @@ function startOrderMatchingEngine() {
           }
 
           console.log(`[MATCHING ENGINE] Filling ${side} LIMIT order ${row.id} for ${row.instrument} @ ${fillPrice}`);
-          await executeOrder(row.id, row.user_id, row.instrument, row.token, side, qty, fillPrice);
+          await executeOrder(row.id, row.user_id, row.instrument, row.token, side, qty, fillPrice, row.exchange || 'NSE_FO');
 
           // Fetch updated order for broadcast
           const updatedOrders = await getOrdersForUser(row.user_id);

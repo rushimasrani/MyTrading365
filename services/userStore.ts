@@ -143,7 +143,7 @@ export const deleteUser = async (id: string) => {
 
 // Trades Logic
 export const getTrades = async (): Promise<TradeRecord[]> => {
-    const res = await query(`SELECT o.*, u.username FROM orders o LEFT JOIN users u ON o.user_id = u.id ORDER BY o.created_at DESC`);
+    const res = await query(`SELECT ob.*, u.username FROM order_book ob LEFT JOIN users u ON ob.user_id = u.id WHERE ob.status = 'COMPLETE' OR ob.status = 'EXECUTED' ORDER BY ob.created_at DESC`);
     return res.rows.map(r => ({
         id: r.id,
         exch: r.exch,
@@ -163,7 +163,7 @@ export const getTrades = async (): Promise<TradeRecord[]> => {
 
 export const getTradesForUser = async (accountId: string): Promise<TradeRecord[]> => {
     const res = await query(
-        `SELECT o.*, u.username FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.user_id = $1 AND o.created_at >= CURRENT_DATE ORDER BY o.created_at DESC`,
+        `SELECT ob.*, u.username FROM order_book ob LEFT JOIN users u ON ob.user_id = u.id WHERE ob.user_id = $1 AND (ob.status = 'COMPLETE' OR ob.status = 'EXECUTED') AND ob.created_at >= CURRENT_DATE ORDER BY ob.created_at DESC`,
         [accountId]
     );
     return res.rows.map(r => ({
@@ -186,12 +186,12 @@ export const getTradesForUser = async (accountId: string): Promise<TradeRecord[]
 export const executeTradeTransaction = async (trade: TradeRecord, marginImpact: number) => {
     await query('BEGIN');
     try {
-        // 1. Insert into orders
+        // 1. Insert into order_book
         await query(`
-            INSERT INTO orders (id, user_id, instrument, token, quantity, price, execution_price, side, order_type, status, exch, oid, tid, eTrdNum, eOrdNum)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            INSERT INTO order_book (id, user_id, instrument, token, quantity, price, execution_price, side, order_type, status, exch, oid, tid, eTrdNum, eOrdNum, account_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         `, [
-            trade.id, trade.account, trade.scrip, trade.token, trade.tQty, trade.tPrice, trade.tPrice, trade.action, 'MARKET', 'COMPLETE', trade.exch, trade.oid, trade.tid, trade.eTrdNum, trade.eOrdNum
+            trade.id, trade.account, trade.scrip, trade.token, trade.tQty, trade.tPrice, trade.tPrice, trade.action, 'MARKET', 'EXECUTED', trade.exch, trade.oid, trade.tid, trade.eTrdNum, trade.eOrdNum, trade.account
         ]);
 
         // 2. Insert into trade_history

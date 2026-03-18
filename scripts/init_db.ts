@@ -46,25 +46,34 @@ const initializeDatabase = async () => {
       )
     `);
 
-    // Create orders table
+    // Create order_book table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS orders (
+      CREATE TABLE IF NOT EXISTS order_book (
         id VARCHAR(50) PRIMARY KEY,
         user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         instrument VARCHAR(100) NOT NULL,
         token VARCHAR(50) NOT NULL,
-        quantity INT NOT NULL,
-        price DECIMAL(15, 2) NOT NULL,
-        execution_price DECIMAL(15, 2) NOT NULL,
+        exchange VARCHAR(20) NOT NULL,
         side VARCHAR(10) NOT NULL,
         order_type VARCHAR(20) NOT NULL,
+        quantity INT NOT NULL,
+        remaining_qty INT NOT NULL DEFAULT 0,
+        price DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        executed_price DECIMAL(15, 2) NOT NULL DEFAULT 0,
         status VARCHAR(20) NOT NULL,
-        exch VARCHAR(20),
+        sl_price DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        disclosed_qty INT NOT NULL DEFAULT 0,
+        account_name VARCHAR(100),
         oid VARCHAR(50),
+        exch VARCHAR(20),
         tid VARCHAR(50),
         eTrdNum VARCHAR(50),
         eOrdNum VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        blocked_margin DECIMAL(15, 2) NOT NULL DEFAULT 0,
+        reject_reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        executed_at TIMESTAMP
       )
     `);
 

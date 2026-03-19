@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Header from './Header';
 import MarketTable from './MarketTable';
+import MarketWatchSearch from './MarketWatchSearch';
 import Footer from './Footer';
 import OrderEntryDialog from './OrderEntryDialog';
 import TradeBookDialog from './TradeBookDialog';
@@ -9,6 +10,7 @@ import NetPositionDialog from './NetPositionDialog';
 import RMSLimitDialog from './RMSLimitDialog';
 import AddScripDialog from './AddScripDialog';
 import ChangePasswordDialog from './ChangePasswordDialog';
+import MobileTabBar, { MobileTab } from './MobileTabBar';
 import { StockData, User } from '../types';
 import { MOCK_RMS_RECORDS } from '../mockData';
 import { useMarketData } from '../hooks/useMarketData';
@@ -65,6 +67,34 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
     const [isRMSLimitOpen, setIsRMSLimitOpen] = useState(false);
     const [isAddScripDialogOpen, setIsAddScripDialogOpen] = useState(false);
     const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+
+    const [activeMobileTab, setActiveMobileTab] = useState<MobileTab>('watchlist');
+
+    const handleMobileTabChange = (tab: MobileTab) => {
+        setActiveMobileTab(tab);
+        if (tab === 'watchlist') {
+            setIsOrderBookOpen(false);
+            setIsTradeBookOpen(false);
+            setIsNetPositionOpen(false);
+        } else if (tab === 'orders') {
+            setIsOrderBookOpen(true);
+            setIsTradeBookOpen(false);
+            setIsNetPositionOpen(false);
+        } else if (tab === 'positions') {
+            setIsOrderBookOpen(false);
+            setIsTradeBookOpen(false);
+            setIsNetPositionOpen(true);
+        } else if (tab === 'trades') {
+            setIsOrderBookOpen(false);
+            setIsTradeBookOpen(true);
+            setIsNetPositionOpen(false);
+        } else if (tab === 'menu') {
+            setIsOrderBookOpen(false);
+            setIsTradeBookOpen(false);
+            setIsNetPositionOpen(false);
+            setIsRMSLimitOpen(true);
+        }
+    };
 
     // Fetch Default Watchlist if nothing is saved
     useEffect(() => {
@@ -243,6 +273,15 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [stocks.length, selectedIndex, isOrderDialogOpen, isOrderBookOpen, isTradeBookOpen, isNetPositionOpen, isRMSLimitOpen, isAddScripDialogOpen]);
 
+    const handleHeaderOrderAction = (action: 'BUY' | 'SELL') => {
+        if (selectedIndex === -1 || !stocks[selectedIndex]) {
+            alert('Please select a script first from the Market Watch.');
+            return;
+        }
+        setOrderEntryAction(action);
+        setIsOrderDialogOpen(true);
+    };
+
     // Calculate Live Equity metrics based on Professional terminal definitions
     let positionMargin = 0;
     let runningM2M = 0;
@@ -272,31 +311,31 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
 
     return (
         <div className="flex flex-col h-screen w-full bg-black select-none text-white font-sans relative">
-            <div className="absolute top-1 right-2 z-50 flex items-center">
-                <div className="flex gap-3 text-[11px] font-semibold tracking-wide">
-                    <div className="bg-[#1c2630] px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center">
-                        <span className="text-gray-300 mr-2">Total Capital:</span>
+            <div className="relative md:absolute md:top-1 md:right-2 z-40 flex flex-col md:flex-row items-center w-full md:w-auto bg-[#0a0a0a] md:bg-transparent px-1 py-1 md:p-0 border-b border-gray-700 md:border-none">
+                <div className="grid grid-cols-2 md:flex gap-1 md:gap-3 text-[11px] font-semibold tracking-wide w-full md:w-auto">
+                    <div className="bg-[#1c2630] px-2 md:px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center justify-between md:justify-start">
+                        <span className="text-gray-300 mr-1 md:mr-2">Capital:</span>
                         <span className="text-blue-400">₹{(liveCapital ?? user.totalCapital)?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                     </div>
-                    <div className="bg-[#1c2630] px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center">
-                        <span className="text-gray-300 mr-2">Used Margin:</span>
+                    <div className="bg-[#1c2630] px-2 md:px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center justify-between md:justify-start">
+                        <span className="text-gray-300 mr-1 md:mr-2">Margin:</span>
                         <span className="text-yellow-400">₹{usedCapital.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                         {blockedMargin > 0 && (
-                            <span className="text-orange-400 ml-1 text-[10px]">(₹{blockedMargin.toLocaleString('en-IN', { minimumFractionDigits: 0 })} blocked)</span>
+                            <span className="hidden md:inline text-orange-400 ml-1 text-[10px]">(₹{blockedMargin.toLocaleString('en-IN', { minimumFractionDigits: 0 })})</span>
                         )}
                     </div>
-                    <div className="bg-[#1c2630] px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center">
-                        <span className="text-gray-300 mr-2">Available:</span>
+                    <div className="bg-[#1c2630] px-2 md:px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center justify-between md:justify-start">
+                        <span className="text-gray-300 mr-1 md:mr-2">Avail:</span>
                         <span className={availableCapital >= 0 ? 'text-green-400' : 'text-red-400'}>₹{availableCapital.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                     </div>
-                    <div className="bg-[#1c2630] px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center">
-                        <span className="text-gray-300 mr-2">M2M:</span>
+                    <div className="bg-[#1c2630] px-2 md:px-3 py-1 rounded border border-gray-600 shadow-sm flex items-center justify-between md:justify-start">
+                        <span className="text-gray-300 mr-1 md:mr-2">M2M:</span>
                         <span className={runningM2M > 0 ? 'text-green-500' : runningM2M < 0 ? 'text-red-500' : 'text-gray-400'}>
                             {runningM2M > 0 ? '+' : ''}₹{runningM2M.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                     </div>
                 </div>
-                <button onClick={onLogout} className="text-[11px] font-bold bg-red-600/80 hover:bg-red-600 text-white px-3 py-1 rounded ml-3 border border-red-800 shadow-inner">LOGOUT</button>
+                <button onClick={onLogout} className="hidden md:block text-[11px] font-bold bg-red-600/80 hover:bg-red-600 text-white px-3 py-1 rounded ml-3 border border-red-800 shadow-inner">LOGOUT</button>
             </div>
 
             <Header
@@ -307,11 +346,14 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
                 onOpenRMSLimit={() => setIsRMSLimitOpen(true)}
                 onOpenAddScrip={() => setIsAddScripDialogOpen(true)}
                 onSaveMarketWatch={handleSaveMarketWatch}
+                onBuyOrder={() => handleHeaderOrderAction('BUY')}
+                onSellOrder={() => handleHeaderOrderAction('SELL')}
                 onChangePassword={() => setIsChangePasswordOpen(true)}
                 onLogout={onLogout}
                 onRelogin={handleRelogin}
             />
-            <div className="flex-1 overflow-hidden relative flex flex-col">
+            <div className="flex-1 overflow-hidden relative flex flex-col pb-[60px] md:pb-0 pt-[36px] md:pt-0">
+                <MarketWatchSearch onAdd={handleAddScrip} />
                 <MarketTable
                     data={stocks}
                     selectedIndex={selectedIndex}
@@ -321,10 +363,17 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
                         setOrderEntryAction('BUY'); // Defaults to BUY on double click
                         setIsOrderDialogOpen(true);
                     }}
+                    onOrderAction={(index, action) => {
+                        setSelectedIndex(index);
+                        setOrderEntryAction(action);
+                        setIsOrderDialogOpen(true);
+                    }}
                 />
             </div>
 
             <Footer lastLog={lastLog} />
+
+            <MobileTabBar activeTab={activeMobileTab} onTabChange={handleMobileTabChange} />
 
             {isOrderDialogOpen && selectedIndex !== -1 && (
                 <OrderEntryDialog
@@ -339,7 +388,10 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
             {isOrderBookOpen && (
                 <OrderBookDialog
                     orders={orders}
-                    onClose={() => setIsOrderBookOpen(false)}
+                    onClose={() => {
+                        setIsOrderBookOpen(false);
+                        setActiveMobileTab('watchlist');
+                    }}
                     onCancelOrder={async (id) => {
                         await cancelOrder(id);
                         generateLog('ORDER', 'Order Cancelled');
@@ -354,7 +406,10 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
             {isTradeBookOpen && (
                 <TradeBookDialog
                     trades={trades}
-                    onClose={() => setIsTradeBookOpen(false)}
+                    onClose={() => {
+                        setIsTradeBookOpen(false);
+                        setActiveMobileTab('watchlist');
+                    }}
                 />
             )}
 
@@ -362,14 +417,20 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
                 <NetPositionDialog
                     positions={positions}
                     stocks={stocks}
-                    onClose={() => setIsNetPositionOpen(false)}
+                    onClose={() => {
+                        setIsNetPositionOpen(false);
+                        setActiveMobileTab('watchlist');
+                    }}
                 />
             )}
 
             {isRMSLimitOpen && (
                 <RMSLimitDialog
                     userId={user.id}
-                    onClose={() => setIsRMSLimitOpen(false)}
+                    onClose={() => {
+                        setIsRMSLimitOpen(false);
+                        setActiveMobileTab('watchlist');
+                    }}
                     availableCapital={availableCapital}
                     usedCapital={usedCapital}
                     blockedMargin={blockedMargin}

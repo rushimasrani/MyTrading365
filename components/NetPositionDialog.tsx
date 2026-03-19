@@ -80,7 +80,7 @@ const NetPositionDialog: React.FC<NetPositionDialogProps> = ({ positions = [], s
 
   return (
     <div
-      className="fixed z-[90] font-sans select-none shadow-[0_0_20px_rgba(0,0,0,0.8)] border-l border-r border-b border-gray-600 bg-[#333] w-[900px] h-[400px] flex flex-col"
+      className="fixed z-[90] font-sans select-none shadow-[0_0_20px_rgba(0,0,0,0.8)] border-l border-r border-b border-gray-600 bg-[#333] w-full h-[calc(100vh-60px)] max-md:!top-0 max-md:!left-0 md:w-[900px] md:h-[400px] flex flex-col pt-9 md:pt-0"
       style={{ top: position.y, left: position.x }}
     >
       {/* Title Bar */}
@@ -111,8 +111,8 @@ const NetPositionDialog: React.FC<NetPositionDialogProps> = ({ positions = [], s
       </div>
 
       {/* Table Container */}
-      <div className="flex-1 bg-[#555] overflow-auto border border-gray-500 m-[2px]">
-        <table className="w-full border-collapse text-left">
+      <div className="flex-1 bg-[#555] overflow-x-auto border border-gray-500 m-[2px]">
+        <table className="w-full border-collapse text-left min-w-[900px] md:min-w-full">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gradient-to-b from-[#4a8a9a] to-[#2a5a6a] text-white text-xs font-bold whitespace-nowrap">
               <th className="py-1 px-2 border-r border-[#6aaabc] w-[60px]">Exch</th>

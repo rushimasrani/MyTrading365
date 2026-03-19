@@ -10,12 +10,27 @@ interface HeaderProps {
   onOpenRMSLimit: () => void;
   onOpenAddScrip: () => void;
   onSaveMarketWatch: () => void;
+  onBuyOrder?: () => void;
+  onSellOrder?: () => void;
   onChangePassword?: () => void;
   onLogout?: () => void;
   onRelogin?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ indices, onOpenOrderBook, onOpenTradeBook, onOpenNetPosition, onOpenRMSLimit, onOpenAddScrip, onSaveMarketWatch, onChangePassword, onLogout, onRelogin }) => {
+const Header: React.FC<HeaderProps> = ({
+  indices,
+  onOpenOrderBook,
+  onOpenTradeBook,
+  onOpenNetPosition,
+  onOpenRMSLimit,
+  onOpenAddScrip,
+  onSaveMarketWatch,
+  onBuyOrder,
+  onSellOrder,
+  onChangePassword,
+  onLogout,
+  onRelogin
+}) => {
   // Track which menu is currently active: 'marketWatch', 'order', etc.
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -70,7 +85,7 @@ const Header: React.FC<HeaderProps> = ({ indices, onOpenOrderBook, onOpenTradeBo
     <div className="flex flex-col w-full relative z-50">
       {/* Top Menu Bar with Gradient */}
       <div className="flex justify-between items-center px-2 py-1 bg-gradient-to-b from-[#37475a] to-[#1c2630] text-white border-b border-gray-600 shadow-md h-9 select-none">
-        <div className="flex space-x-4 text-sm font-bold tracking-wide items-center h-full">
+        <div className="hidden md:flex space-x-4 text-sm font-bold tracking-wide items-center h-full">
 
           {/* Market Watch Menu Trigger */}
           <div className="relative h-full flex items-center" ref={marketWatchRef}>
@@ -145,10 +160,22 @@ const Header: React.FC<HeaderProps> = ({ indices, onOpenOrderBook, onOpenTradeBo
             {/* Order Dropdown */}
             {activeMenu === 'order' && (
               <div className="absolute top-full left-0 mt-[2px] w-48 bg-white border border-gray-500 shadow-xl text-black text-[13px] font-normal flex flex-col py-1 z-50">
-                <div className="cursor-pointer px-3 py-[2px] hover:bg-[#002060] hover:text-white whitespace-nowrap">
+                <div
+                  className="cursor-pointer px-3 py-[2px] hover:bg-[#002060] hover:text-white whitespace-nowrap"
+                  onClick={() => {
+                    onBuyOrder?.();
+                    setActiveMenu(null);
+                  }}
+                >
                   Buy
                 </div>
-                <div className="cursor-pointer px-3 py-[2px] hover:bg-[#002060] hover:text-white whitespace-nowrap">
+                <div
+                  className="cursor-pointer px-3 py-[2px] hover:bg-[#002060] hover:text-white whitespace-nowrap"
+                  onClick={() => {
+                    onSellOrder?.();
+                    setActiveMenu(null);
+                  }}
+                >
                   Sell
                 </div>
 

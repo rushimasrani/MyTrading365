@@ -62,7 +62,7 @@ const OrderBookDialog: React.FC<OrderBookDialogProps> = ({ orders, onClose, onCa
     return (
         <>
             <div
-                className="fixed z-[90] font-sans select-none shadow-[0_0_20px_rgba(0,0,0,0.8)] border-l border-r border-b border-gray-600 bg-[#333] w-[1200px] h-[500px] flex flex-col"
+                className="fixed z-[90] font-sans select-none shadow-[0_0_20px_rgba(0,0,0,0.8)] border-l border-r border-b border-gray-600 bg-[#333] w-full h-[calc(100vh-60px)] md:w-[1200px] md:h-[500px] max-md:!top-0 max-md:!left-0 flex flex-col pt-9 md:pt-0"
                 style={{ top: position.y, left: position.x }}
             >
                 {/* Title Bar */}
@@ -100,8 +100,8 @@ const OrderBookDialog: React.FC<OrderBookDialogProps> = ({ orders, onClose, onCa
                 </div>
 
                 {/* Table Container */}
-                <div className="flex-1 bg-black overflow-auto">
-                    <table className="w-full border-collapse text-left">
+                <div className="flex-1 bg-black overflow-x-auto">
+                    <table className="w-full border-collapse text-left min-w-[1200px] md:min-w-full">
                         <thead className="sticky top-0 z-10">
                             <tr className="bg-gradient-to-b from-[#4a8a9a] to-[#2a5a6a] text-white text-[11px] font-bold whitespace-nowrap">
                                 <th className="py-1 px-1 border-r border-[#6aaabc] w-[50px] text-center">Modify</th>

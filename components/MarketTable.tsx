@@ -48,9 +48,16 @@ interface MarketTableProps {
   selectedIndex: number;
   onSelectRow: (index: number) => void;
   onDoubleClickRow?: (index: number) => void;
+  onOrderAction?: (index: number, action: 'BUY' | 'SELL') => void;
 }
 
-const MarketTable: React.FC<MarketTableProps> = ({ data, selectedIndex, onSelectRow, onDoubleClickRow }) => {
+const MarketTable: React.FC<MarketTableProps> = ({
+  data,
+  selectedIndex,
+  onSelectRow,
+  onDoubleClickRow,
+  onOrderAction
+}) => {
   const tableRef = useRef<HTMLDivElement>(null);
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
 
@@ -69,23 +76,23 @@ const MarketTable: React.FC<MarketTableProps> = ({ data, selectedIndex, onSelect
   }, [selectedIndex]);
 
   return (
-    <div className="flex-1 w-full bg-black overflow-auto relative" ref={tableRef}>
-      <table className="w-full border-collapse text-left">
-        <thead className="sticky top-0 z-10">
+    <div className="flex-1 w-full bg-black overflow-x-auto relative" ref={tableRef}>
+      <table className="table-fixed w-full border-collapse text-left min-w-[900px] md:min-w-full">
+        <thead className="sticky top-0 z-20">
           <tr className="bg-[#2a4d6e] text-white text-xs font-bold leading-normal">
-            <th className="py-1 px-2 border-r border-gray-600 min-w-[150px]">DispName</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">LTP</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Change</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">BQty</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Bid</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Ask</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">AQty</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Open</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">High</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Low</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">PClose</th>
-            <th className="py-1 px-2 border-r border-gray-600 text-right">Volume</th>
-            <th className="py-1 px-2 text-right">Time</th>
+            <th className="py-2 md:py-1 px-3 md:px-2 border-r border-gray-600 w-[240px] md:w-[150px] sticky left-0 bg-[#2a4d6e] z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">DispName</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">LTP</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">Change</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[70px]">BQty</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">Bid</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">Ask</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[70px]">AQty</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">Open</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">High</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">Low</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[80px]">PClose</th>
+            <th className="py-1 px-2 border-r border-gray-600 text-right w-[90px]">Volume</th>
+            <th className="py-1 px-2 text-right w-[80px]">Time</th>
           </tr>
         </thead>
         <tbody className="text-white text-sm font-medium font-mono">
@@ -97,10 +104,27 @@ const MarketTable: React.FC<MarketTableProps> = ({ data, selectedIndex, onSelect
                 ref={isSelected ? selectedRowRef : null}
                 onClick={() => onSelectRow(index)}
                 onDoubleClick={() => onDoubleClickRow && onDoubleClickRow(index)}
-                className={`cursor-pointer transition-colors duration-75 border-b border-[#333] ${isSelected ? 'bg-[#004080]' : 'hover:bg-[#1a2e40]'
-                  }`}
+                className={`group cursor-pointer transition-colors duration-75 border-b border-[#333] ${isSelected ? 'bg-[#004080]' : 'hover:bg-[#1a2e40]'}`}
               >
-                <td className="py-1 px-2 border-r border-[#444] whitespace-nowrap">{row.dispName}</td>
+                <td className={`py-1 md:py-1 px-2 md:px-2 border-r border-[#444] whitespace-nowrap sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] bg-black group-hover:bg-[#1a2e40] ${isSelected ? '!bg-[#004080]' : ''}`}>
+                  <div className="flex justify-between items-center h-[40px] md:h-auto overflow-hidden">
+                    <span className="truncate w-[110px] md:w-full font-bold md:font-normal" title={row.dispName}>{row.dispName}</span>
+                    <div className="md:hidden flex space-x-[4px] shrink-0 h-full items-center">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onOrderAction?.(index, 'BUY'); }}
+                        className="bg-blue-600/90 active:bg-blue-600 border border-blue-500 rounded text-white text-[12px] font-bold w-[46px] h-[34px] flex items-center justify-center shadow-sm"
+                      >
+                        B
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onOrderAction?.(index, 'SELL'); }}
+                        className="bg-red-600/90 active:bg-red-600 border border-red-500 rounded text-white text-[12px] font-bold w-[46px] h-[34px] flex items-center justify-center shadow-sm"
+                      >
+                        S
+                      </button>
+                    </div>
+                  </div>
+                </td>
                 <HighlightCell value={row.ltp} className="py-1 px-2 border-r border-[#444] text-right" />
                 <td className={`py-1 px-2 border-r border-[#444] text-right ${row.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {row.change?.toFixed(2) || '0.00'}
@@ -122,8 +146,8 @@ const MarketTable: React.FC<MarketTableProps> = ({ data, selectedIndex, onSelect
           })}
           {/* Fill remaining space with empty rows to simulate the grid look */}
           {Array.from({ length: 20 }).map((_, i) => (
-            <tr key={`empty-${i}`} className="hover:bg-[#1a2e40]">
-              <td className="py-1 px-2 border-r border-[#333] text-transparent select-none">.</td>
+            <tr key={`empty-${i}`} className="hover:bg-[#1a2e40] group">
+              <td className="py-3 md:py-1 px-3 md:px-2 border-r border-[#333] text-transparent select-none sticky left-0 bg-black group-hover:bg-[#1a2e40] z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">.</td>
               <td className="py-1 px-2 border-r border-[#333]"></td>
               <td className="py-1 px-2 border-r border-[#333]"></td>
               <td className="py-1 px-2 border-r border-[#333]"></td>

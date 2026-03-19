@@ -118,7 +118,7 @@ const RMSLimitDialog: React.FC<RMSLimitDialogProps> = ({
 
   return (
     <div
-      className="fixed z-[100] font-sans select-none shadow-[0_10px_40px_rgba(0,0,0,0.6)] bg-[#2a2a2a] w-[500px] h-[550px] flex flex-col border border-gray-500"
+      className="fixed z-[100] font-sans select-none shadow-[0_10px_40px_rgba(0,0,0,0.6)] bg-[#2a2a2a] w-full h-[calc(100vh-60px)] md:w-[500px] md:h-[550px] max-md:!top-0 max-md:!left-0 flex flex-col border border-gray-500 pt-9 md:pt-0"
       style={{ top: position.y, left: position.x }}
     >
       {/* Inject local styles for scrollbar */}
@@ -177,14 +177,14 @@ const RMSLimitDialog: React.FC<RMSLimitDialogProps> = ({
 
         {/* Summary Header Section */}
         <div className="bg-black border border-gray-500 mb-[3px] p-2 text-white text-[12px] font-bold shrink-0 font-sans shadow-inner">
-          <div className="flex justify-between px-2">
-            <div className="grid grid-cols-[90px_1fr] gap-x-2 w-1/2">
-              <span className="text-left text-[#ccc]">Available Capital</span>
+          <div className="flex flex-col md:flex-row justify-between px-2 gap-2 md:gap-0">
+            <div className="grid grid-cols-2 md:grid-cols-[90px_1fr] gap-x-2 w-full md:w-1/2">
+              <span className="text-left text-[#ccc] md:auto">Available Capital</span>
               <span className={`text-right ${displayAvailableCapital >= 0 ? 'text-green-400' : 'text-red-400'}`}>{(displayAvailableCapital).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               <span className="text-left text-[#ccc]">Allocated M2M</span>
               <span className="text-right text-purple-400">{(displayAllocM2M).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
             </div>
-            <div className="grid grid-cols-[80px_1fr] gap-x-2 w-1/2 ml-4">
+            <div className="grid grid-cols-2 md:grid-cols-[80px_1fr] gap-x-2 w-full md:w-1/2 md:ml-4">
               <span className="text-left text-[#ccc]">Used Capital</span>
               <span className="text-right text-yellow-400">{(displayUsedCapital).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               {blockedMargin > 0 && (

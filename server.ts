@@ -32,6 +32,40 @@ app.use('/api', (req, res, next) => {
 // In-memory session store: token -> { userId, role, createdAt }
 const activeSessions = new Map<string, { userId: string; role: string; createdAt: number }>();
 
+function getSessionUser(req: express.Request) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return null;
+  return activeSessions.get(token) || null;
+}
+
+async function getTargetMasterId(req: express.Request, res: express.Response): Promise<string | null> {
+  const session = getSessionUser(req);
+  if (!session) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return null;
+  }
+
+  if (session.role === 'SUPER_MASTER') {
+    const delegateId = req.query.masterId as string;
+    if (!delegateId) {
+      res.status(400).json({ error: 'masterId required' });
+      return null;
+    }
+    const master = await getUserById(delegateId);
+    if (!master || master.parentUserId !== session.userId) {
+      res.status(401).json({ error: 'Unauthorized. Not your Master.' });
+      return null;
+    }
+    return delegateId;
+  }
+
+  if (session.role === 'MASTER') return session.userId;
+
+  res.status(401).json({ error: 'Unauthorized' });
+  return null;
+}
+
 console.log('Environment Variables Check:');
 console.log('UPSTOX_ACCESS_TOKEN:', process.env.UPSTOX_ACCESS_TOKEN ? 'Set' : 'Missing');
 
@@ -364,9 +398,13 @@ app.post('/api/auth/change-password', async (req, res) => {
 });
 
 app.get('/api/admin/clients', async (req, res) => {
-  // Return all non-admin users along with their live positions to power Equity features
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
+  // Return non-admin users along with their live positions
   const users = await getUsers();
-  const clientUsers = users.filter(u => u.role === 'CLIENT');
+  // Filter clients to only those belonging to this MASTER (or orphans for backward compatibility fallback)
+  const clientUsers = users.filter(u => u.role === 'CLIENT' && (u.parentUserId === targetMasterId || !u.parentUserId));
 
   const clients = await Promise.all(clientUsers.map(async (c) => {
     const positions = await calculatePositionsForUser(c.id);
@@ -376,6 +414,9 @@ app.get('/api/admin/clients', async (req, res) => {
 });
 
 app.post('/api/admin/clients', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   const data = req.body;
 
   if (await getUserByUsername(data.username)) {
@@ -388,6 +429,7 @@ app.post('/api/admin/clients', async (req, res) => {
     password: data.password,
     role: 'CLIENT' as const,
     status: 'ACTIVE' as const,
+    parentUserId: targetMasterId,
     capital: Number(data.capital),
     totalCapital: Number(data.capital),
     createdAt: new Date().toISOString()
@@ -400,21 +442,155 @@ app.post('/api/admin/clients', async (req, res) => {
 });
 
 app.put('/api/admin/clients/:id', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   const { id } = req.params;
   const updates = req.body;
 
   const user = await getUserById(id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!user || (user.parentUserId && user.parentUserId !== targetMasterId)) {
+    return res.status(404).json({ error: 'User not found or unauthorized' });
+  }
 
   await updateUser(id, updates);
   res.json(await getUserById(id));
 });
 
 app.delete('/api/admin/clients/:id', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   const { id } = req.params;
+  const user = await getUserById(id);
+  if (!user || (user.parentUserId && user.parentUserId !== targetMasterId)) {
+    return res.status(404).json({ error: 'User not found or unauthorized' });
+  }
+
   await deleteUser(id);
   res.json({ success: true });
 });
+
+// ==== Super Master Routes ====
+app.get('/api/supermaster/masters', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || session.role !== 'SUPER_MASTER') {
+    return res.status(401).json({ error: 'Unauthorized. Only SUPER_MASTER allowed.' });
+  }
+
+  const users = await getUsers();
+  const masters = users.filter(u => u.role === 'MASTER' && u.parentUserId === session.userId);
+
+  // For each Master, calculate total clients, total allocated capital, etc.
+  const populatedMasters = masters.map(m => {
+    const myClients = users.filter(u => u.role === 'CLIENT' && u.parentUserId === m.id);
+    let totalClientCapital = 0;
+    myClients.forEach(c => totalClientCapital += (c.totalCapital || 0));
+    return {
+      ...m,
+      totalClients: myClients.length,
+      totalClientCapital
+    };
+  });
+
+  res.json(populatedMasters);
+});
+
+app.post('/api/supermaster/create-master', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || session.role !== 'SUPER_MASTER') {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+
+  const data = req.body;
+  if (await getUserByUsername(data.username)) {
+    return res.status(400).json({ error: 'Username already exists' });
+  }
+
+  // Validate limits (Max 20 Masters per Super Master)
+  const users = await getUsers();
+  const myMastersCount = users.filter(u => u.role === 'MASTER' && u.parentUserId === session.userId).length;
+  if (myMastersCount >= 20) {
+    return res.status(400).json({ error: 'Maximum 20 Master accounts allowed per Super Master' });
+  }
+
+  const newMaster = {
+    id: `master-${Date.now()}`,
+    username: data.username,
+    password: data.password,
+    role: 'MASTER' as const,
+    status: 'ACTIVE' as const,
+    parentUserId: session.userId,
+    capital: 0,
+    totalCapital: 0,
+    createdAt: new Date().toISOString()
+  };
+
+  await addUser(newMaster);
+  const { password: _, ...masterWithoutPassword } = newMaster;
+  res.json({ ...masterWithoutPassword, totalClients: 0, totalClientCapital: 0 });
+});
+
+app.get('/api/supermaster/master/:id/clients', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || session.role !== 'SUPER_MASTER') return res.status(401).json({ error: 'Unauthorized.' });
+
+  const masterId = req.params.id;
+  const master = await getUserById(masterId);
+
+  if (!master || master.role !== 'MASTER' || master.parentUserId !== session.userId) {
+    return res.status(404).json({ error: 'Master not found or unauthorized' });
+  }
+
+  const users = await getUsers();
+  const clientUsers = users.filter(u => u.role === 'CLIENT' && u.parentUserId === masterId);
+
+  // Populate positions so super master can see margin used
+  const clients = await Promise.all(clientUsers.map(async (c) => {
+    const positions = await calculatePositionsForUser(c.id);
+    return { ...c, positions };
+  }));
+
+  res.json(clients);
+});
+
+app.put('/api/supermaster/master/:id/status', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || session.role !== 'SUPER_MASTER') return res.status(401).json({ error: 'Unauthorized.' });
+
+  const masterId = req.params.id;
+  const updates = req.body;
+
+  const master = await getUserById(masterId);
+  if (!master || master.parentUserId !== session.userId) {
+    return res.status(404).json({ error: 'Master not found or unauthorized' });
+  }
+
+  await updateUser(masterId, { status: updates.status });
+  res.json(await getUserById(masterId));
+});
+
+app.delete('/api/supermaster/master/:id', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || session.role !== 'SUPER_MASTER') return res.status(401).json({ error: 'Unauthorized.' });
+
+  const masterId = req.params.id;
+  const master = await getUserById(masterId);
+  if (!master || master.parentUserId !== session.userId) {
+    return res.status(404).json({ error: 'Master not found or unauthorized' });
+  }
+
+  // Check if they have clients before deleting
+  const users = await getUsers();
+  const myClients = users.filter(u => u.role === 'CLIENT' && u.parentUserId === masterId);
+  if (myClients.length > 0) {
+    return res.status(400).json({ error: 'Cannot delete a Master that has active Client accounts. Disable it instead or delete the clients first.' });
+  }
+
+  await deleteUser(masterId);
+  res.json({ success: true });
+});
+
 
 async function squareOffClient(clientId: string) {
   const user = await getUserById(clientId);
@@ -466,8 +642,16 @@ async function squareOffClient(clientId: string) {
 }
 
 app.post('/api/admin/clients/:id/squareoff', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   try {
     const { id } = req.params;
+    const user = await getUserById(id);
+    if (!user || (user.parentUserId && user.parentUserId !== targetMasterId)) {
+      return res.status(404).json({ error: 'User not found or unauthorized' });
+    }
+
     const result = await squareOffClient(id);
     if (!result.success) return res.status(404).json({ error: result.error });
     res.json(result);
@@ -479,26 +663,48 @@ app.post('/api/admin/clients/:id/squareoff', async (req, res) => {
 
 // RMS Limit Administration Routes
 app.get('/api/admin/clients/:clientId/rms-limits', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
+  const user = await getUserById(req.params.clientId);
+  if (!user || (user.parentUserId && user.parentUserId !== targetMasterId)) return res.status(404).json({ error: 'User not found or unauthorized' });
+
   const limits = await getRMSLimits(req.params.clientId);
   res.json(limits);
 });
 
 app.post('/api/admin/clients/:clientId/rms-limits', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
+  const user = await getUserById(req.params.clientId);
+  if (!user || (user.parentUserId && user.parentUserId !== targetMasterId)) return res.status(404).json({ error: 'User not found or unauthorized' });
+
   await addRMSLimit({ ...req.body, userId: req.params.clientId });
   res.json({ success: true });
 });
 
 app.put('/api/admin/rms-limits/:id', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   await updateRMSLimit(req.params.id, req.body);
   res.json({ success: true });
 });
 
 app.delete('/api/admin/rms-limits/:id', async (req, res) => {
+  const targetMasterId = await getTargetMasterId(req, res);
+  if (!targetMasterId) return;
+
   await deleteRMSLimit(req.params.id);
   res.json({ success: true });
 });
 
 app.post('/api/admin/refresh-instruments', async (req, res) => {
+  const session = getSessionUser(req);
+  if (!session || (session.role !== 'MASTER' && session.role !== 'SUPER_MASTER')) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
   console.log(`[ADMIN] Manual Instrument Refresh triggered via API`);
   try {
     await refreshInstruments();

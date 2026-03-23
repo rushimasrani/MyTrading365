@@ -7,9 +7,25 @@ import ClientRMSPanel from './ClientRMSPanel';
 interface AdminDashboardProps {
     onLogout: () => void;
     token: string;
+    delegateMasterId?: string;
 }
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delegateMasterId }) => {
+    const getAuthHeaders = () => {
+        return { 'Authorization': `Bearer ${token}` };
+    };
+
+    const getJsonAuthHeaders = () => ({
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json'
+    });
+
+    const getUrl = (path: string) => {
+        if (!delegateMasterId) return path;
+        const separator = path.includes('?') ? '&' : '?';
+        return `${path}${separator}masterId=${delegateMasterId}`;
+    };
+
     const [clients, setClients] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [isRefreshingInstruments, setIsRefreshingInstruments] = useState(false);
@@ -38,8 +54,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
 
     const fetchClients = async () => {
         try {
-            const res = await fetch('/api/admin/clients');
+            const res = await fetch(getUrl('/api/admin/clients'), {
+                headers: getAuthHeaders()
+            });
+            if (res.status === 401) {
+                onLogout();
+                return;
+            }
+            if (!res.ok) {
+                console.error("Failed to fetch clients");
+                return;
+            }
             const data: User[] = await res.json();
+
+            if (!Array.isArray(data)) {
+                console.error("API did not return an array of clients:", data);
+                setClients([]);
+                return;
+            }
+
             setClients(data);
 
             // Subscribe to all active position tokens across all clients to ensure live Equity streaming
@@ -78,7 +111,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
 
         setIsRefreshingInstruments(true);
         try {
-            const res = await fetch('/api/admin/refresh-instruments', { method: 'POST' });
+            const res = await fetch(getUrl('/api/admin/refresh-instruments'), {
+                method: 'POST',
+                headers: getAuthHeaders()
+            });
             const data = await res.json();
             if (data.success) {
                 alert(data.message);
@@ -96,9 +132,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
     const handleCreateClient = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const res = await fetch('/api/admin/clients', {
+            const res = await fetch(getUrl('/api/admin/clients'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getJsonAuthHeaders(),
                 body: JSON.stringify({ username: newUsername, password: newPassword, capital: newCapital })
             });
             if (res.ok) {
@@ -119,9 +155,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
     const handleToggleStatus = async (client: User) => {
         const newStatus = client.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
         try {
-            await fetch(`/api/admin/clients/${client.id}`, {
+            await fetch(getUrl(`/api/admin/clients/${client.id}`), {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getJsonAuthHeaders(),
                 body: JSON.stringify({ status: newStatus })
             });
             fetchClients();
@@ -134,9 +170,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
         const amount = prompt(`Enter new total capital for ${client.username}:`, client.capital.toString());
         if (amount !== null && !isNaN(Number(amount))) {
             try {
-                await fetch(`/api/admin/clients/${client.id}`, {
+                await fetch(getUrl(`/api/admin/clients/${client.id}`), {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getJsonAuthHeaders(),
                     body: JSON.stringify({ capital: Number(amount), totalCapital: Number(amount) })
                 });
                 fetchClients();
@@ -150,9 +186,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
         const amount = prompt(`Enter Allocated M2M limit for ${client.username}:`, (client.allocatedM2m || 0).toString());
         if (amount !== null && !isNaN(Number(amount))) {
             try {
-                await fetch(`/api/admin/clients/${client.id}`, {
+                await fetch(getUrl(`/api/admin/clients/${client.id}`), {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getJsonAuthHeaders(),
                     body: JSON.stringify({ allocatedM2m: Number(amount) })
                 });
                 fetchClients();
@@ -165,8 +201,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
     const handleSquareOff = async (client: User) => {
         if (!window.confirm(`Are you sure you want to square off all open positions for ${client.username}?`)) return;
         try {
-            const res = await fetch(`/api/admin/clients/${client.id}/squareoff`, {
-                method: 'POST'
+            const res = await fetch(getUrl(`/api/admin/clients/${client.id}/squareoff`), {
+                method: 'POST',
+                headers: getAuthHeaders()
             });
             if (res.ok) {
                 const data = await res.json();
@@ -188,9 +225,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
         if (!resetClientId) return;
 
         try {
-            const res = await fetch(`/api/admin/clients/${resetClientId}`, {
+            const res = await fetch(getUrl(`/api/admin/clients/${resetClientId}`), {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getJsonAuthHeaders(),
                 body: JSON.stringify({ password: resetPassword })
             });
             if (res.ok) {
@@ -210,7 +247,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
     const handleViewPositions = async (client: User) => {
         setViewedClientId(client.id);
         try {
-            const res = await fetch(`/api/trade/positions/${client.id}`);
+            const res = await fetch(getUrl(`/api/trade/positions/${client.id}`), {
+                headers: getAuthHeaders()
+            });
             const data: NetPositionRecord[] = await res.json();
             setClientPositions(data);
 
@@ -233,10 +272,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token }) => {
     };
 
     return (
-        <div className="h-screen overflow-y-auto bg-gray-900 text-white p-8 font-sans">
+        <div className="h-full min-h-screen overflow-y-auto bg-gray-900 text-white p-8 font-sans">
             <div className="max-w-7xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold">Master Control Panel</h1>
+                    <h1 className="text-3xl font-bold">
+                        Master Control Panel
+                        {delegateMasterId && <span className="text-sm ml-4 font-normal text-blue-400 bg-blue-900/30 px-3 py-1 rounded-full">Super Master View</span>}
+                    </h1>
                     <div className="flex space-x-4">
                         <button
                             onClick={handleRefreshInstruments}

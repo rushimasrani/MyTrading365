@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 
 export const getUsers = async (): Promise<User[]> => {
     const res = await query(`
-        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, 
+        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, u.parent_user_id,
                c.assigned_capital, c.available_capital, c.used_capital, c.allocated_m2m
         FROM users u
         LEFT JOIN capital c ON u.id = c.user_id
@@ -14,8 +14,9 @@ export const getUsers = async (): Promise<User[]> => {
         id: r.id,
         username: r.username,
         password: r.password,
-        role: r.role as 'ADMIN' | 'CLIENT',
+        role: r.role as 'SUPER_MASTER' | 'MASTER' | 'CLIENT',
         status: r.status as 'ACTIVE' | 'DISABLED',
+        parentUserId: r.parent_user_id || undefined,
         capital: Number(r.assigned_capital || 0),
         totalCapital: Number(r.available_capital || 0),
         availableCapital: Number(r.available_capital || 0),
@@ -26,7 +27,7 @@ export const getUsers = async (): Promise<User[]> => {
 
 export const getUserById = async (id: string): Promise<User | undefined> => {
     const res = await query(`
-        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, 
+        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, u.parent_user_id,
                c.assigned_capital, c.available_capital, c.used_capital, c.allocated_m2m
         FROM users u
         LEFT JOIN capital c ON u.id = c.user_id
@@ -39,8 +40,9 @@ export const getUserById = async (id: string): Promise<User | undefined> => {
         id: r.id,
         username: r.username,
         password: r.password,
-        role: r.role as 'ADMIN' | 'CLIENT',
+        role: r.role as 'SUPER_MASTER' | 'MASTER' | 'CLIENT',
         status: r.status as 'ACTIVE' | 'DISABLED',
+        parentUserId: r.parent_user_id || undefined,
         capital: Number(r.assigned_capital || 0),
         totalCapital: Number(r.available_capital || 0),
         availableCapital: Number(r.available_capital || 0),
@@ -51,7 +53,7 @@ export const getUserById = async (id: string): Promise<User | undefined> => {
 
 export const getUserByUsername = async (username: string): Promise<User | undefined> => {
     const res = await query(`
-        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, 
+        SELECT u.id, u.username, u.password_hash as password, u.role, u.status, u.created_at, u.parent_user_id,
                c.assigned_capital, c.available_capital, c.used_capital, c.allocated_m2m
         FROM users u
         LEFT JOIN capital c ON u.id = c.user_id
@@ -64,8 +66,9 @@ export const getUserByUsername = async (username: string): Promise<User | undefi
         id: r.id,
         username: r.username,
         password: r.password,
-        role: r.role as 'ADMIN' | 'CLIENT',
+        role: r.role as 'SUPER_MASTER' | 'MASTER' | 'CLIENT',
         status: r.status as 'ACTIVE' | 'DISABLED',
+        parentUserId: r.parent_user_id || undefined,
         capital: Number(r.assigned_capital || 0),
         totalCapital: Number(r.available_capital || 0),
         availableCapital: Number(r.available_capital || 0),
@@ -80,9 +83,9 @@ export const addUser = async (user: User) => {
         const hashedPassword = user.password ? await bcrypt.hash(user.password, 10) : '';
 
         await query(`
-            INSERT INTO users (id, username, password_hash, role, status, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
-        `, [user.id, user.username, hashedPassword, user.role, user.status, new Date(user.createdAt)]);
+            INSERT INTO users (id, username, password_hash, role, status, created_at, parent_user_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [user.id, user.username, hashedPassword, user.role, user.status, new Date(user.createdAt), user.parentUserId || null]);
 
         await query(`
             INSERT INTO capital (user_id, assigned_capital, available_capital, used_capital, allocated_m2m)
@@ -99,12 +102,13 @@ export const addUser = async (user: User) => {
 export const updateUser = async (id: string, updates: Partial<User>) => {
     await query('BEGIN');
     try {
-        if (updates.status || updates.role || updates.password) {
+        if (updates.status || updates.role || updates.password || updates.parentUserId !== undefined) {
             const setFields = [];
             const values = [];
             let i = 1;
             if (updates.status) { setFields.push(`status = $${i++}`); values.push(updates.status); }
             if (updates.role) { setFields.push(`role = $${i++}`); values.push(updates.role); }
+            if (updates.parentUserId !== undefined) { setFields.push(`parent_user_id = $${i++}`); values.push(updates.parentUserId); }
             if (updates.password) {
                 const hashedPassword = await bcrypt.hash(updates.password, 10);
                 setFields.push(`password_hash = $${i++}`);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import LoginScreen from './components/LoginScreen';
 import AdminDashboard from './components/AdminDashboard';
+import SuperMasterDashboard from './components/SuperMasterDashboard';
 import TradingTerminal from './components/TradingTerminal';
 import { User } from './types';
 
@@ -133,7 +134,11 @@ const App: React.FC = () => {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  if (user.role === 'ADMIN') {
+  if (user.role === 'SUPER_MASTER') {
+    return <SuperMasterDashboard onLogout={handleLogout} token={token} />;
+  }
+
+  if (user.role === 'MASTER' || user.role === 'ADMIN') {
     return <AdminDashboard onLogout={handleLogout} token={token} />;
   }
 

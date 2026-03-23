@@ -73,8 +73,9 @@ export interface User {
   id: string;
   username: string;
   password?: string;
-  role: 'ADMIN' | 'CLIENT';
+  role: 'SUPER_MASTER' | 'MASTER' | 'CLIENT';
   status: 'ACTIVE' | 'DISABLED';
+  parentUserId?: string;
   capital: number;
   totalCapital: number;
   availableCapital?: number;

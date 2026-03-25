@@ -80,6 +80,7 @@ export interface User {
   totalCapital: number;
   availableCapital?: number;
   allocatedM2m?: number;
+  maxLossLimit?: number;
   createdAt: string;
   positions?: NetPositionRecord[];
 }

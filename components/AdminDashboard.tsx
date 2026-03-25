@@ -198,6 +198,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
         }
     };
 
+    const handleUpdateMaxLoss = async (client: User) => {
+        const amount = prompt(`Enter Max Loss Limit for ${client.username} (Leave empty to remove):`, (client.maxLossLimit || '').toString());
+        if (amount !== null) {
+            const limitVal = amount.trim() === '' ? null : Number(amount);
+            if (limitVal !== null && isNaN(limitVal)) return;
+
+            try {
+                await fetch(getUrl(`/api/admin/clients/${client.id}`), {
+                    method: 'PUT',
+                    headers: getJsonAuthHeaders(),
+                    body: JSON.stringify({ maxLossLimit: limitVal })
+                });
+                fetchClients();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    };
+
     const handleSquareOff = async (client: User) => {
         if (!window.confirm(`Are you sure you want to square off all open positions for ${client.username}?`)) return;
         try {
@@ -272,8 +291,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
     };
 
     return (
-        <div className="h-full min-h-screen overflow-y-auto bg-gray-900 text-white p-8 font-sans">
-            <div className="max-w-7xl mx-auto">
+        <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8 font-sans flex flex-col">
+            <div className="max-w-7xl mx-auto h-full flex flex-col flex-1 min-h-[calc(100vh-64px)] w-full">
                 <div className="flex justify-between items-center mb-8">
                     <h1 className="text-3xl font-bold">
                         Master Control Panel
@@ -299,8 +318,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
                     </div>
                 </div>
 
-                <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700">
-                    <div className="flex justify-between items-center mb-6">
+                <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 flex flex-col flex-1 min-h-0">
+                    <div className="flex justify-between items-center mb-6 shrink-0">
                         <h2 className="text-xl font-semibold">Client Accounts</h2>
                         <button
                             onClick={() => setShowCreateModal(true)}
@@ -310,72 +329,92 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
                         </button>
                     </div>
 
-                    <table className="w-full text-left text-sm">
-                        <thead>
-                            <tr className="border-b border-gray-700 text-gray-400">
-                                <th className="py-3 px-4">Username</th>
-                                <th className="py-3 px-4">Status</th>
-                                <th className="py-3 px-4 text-right">Total Capital</th>
-                                <th className="py-3 px-4 text-right">Used Margin</th>
-                                <th className="py-3 px-4 text-right">Running M2M</th>
-                                <th className="py-3 px-4 text-right">Alloc M2M</th>
-                                <th className="py-3 px-4 text-center">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {clients.map(c => {
-                                // Calculate live values
-                                let usedCapital = 0;
-                                let runningM2M = 0;
-
-                                (c.positions || []).forEach(p => {
-                                    const stock = stocks.find(s => s.id === p.token);
-                                    const ltp = stock ? stock.ltp : 0;
-
-                                    if (p.nQty !== 0) {
-                                        usedCapital += (p.nAvg * Math.abs(p.nQty));
-                                        runningM2M += (ltp - p.nAvg) * p.nQty;
-                                    }
-                                });
-
-                                return (
-                                    <tr key={c.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
-                                        <td className="py-3 px-4 font-medium text-base">{c.username}</td>
-                                        <td className="py-3 px-4">
-                                            <span className={`px-2 py-1 text-xs rounded-full ${c.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                                                {c.status}
-                                            </span>
-                                        </td>
-                                        <td className="py-3 px-4 text-right font-mono font-bold text-blue-400">{c.totalCapital?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                                        <td className="py-3 px-4 text-right font-mono text-yellow-400">{usedCapital.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                                        <td className={`py-3 px-4 text-right font-mono font-medium ${runningM2M > 0 ? 'text-green-500' : runningM2M < 0 ? 'text-red-500' : ''}`}>
-                                            {runningM2M.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                                        </td>
-                                        <td className="py-3 px-4 text-right font-mono text-purple-400">{(c.allocatedM2m || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                                        <td className="py-3 px-4">
-                                            <div className="grid grid-cols-4 gap-1.5 max-w-[280px] mx-auto">
-                                                <button onClick={() => handleViewPositions(c)} className="px-1.5 py-1.5 bg-indigo-600/90 hover:bg-indigo-500 border border-indigo-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap">Positions</button>
-                                                <button onClick={() => handleSquareOff(c)} className="px-1.5 py-1.5 bg-orange-600/90 hover:bg-orange-500 border border-orange-500/50 rounded text-[11px] font-bold transition-all active:scale-95 whitespace-nowrap">Square Off</button>
-                                                <button onClick={() => handleUpdateCapital(c)} className="px-1.5 py-1.5 bg-yellow-600/90 hover:bg-yellow-500 border border-yellow-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap">Capital</button>
-                                                <button onClick={() => handleUpdateAllocatedM2M(c)} className="px-1.5 py-1.5 bg-purple-600/90 hover:bg-purple-500 border border-purple-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap">M2M</button>
-                                                <button onClick={() => setRmsPanelClient(c)} className="px-1.5 py-1.5 bg-sky-600/90 hover:bg-sky-500 border border-sky-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap">RMS Rules</button>
-                                                <button onClick={() => setResetClientId(c.id)} className="px-1.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 border border-emerald-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap">Password</button>
-                                                <button onClick={() => handleToggleStatus(c)} className={`col-span-2 px-1.5 py-1.5 rounded text-[11px] font-bold transition-all active:scale-95 whitespace-nowrap border ${c.status === 'ACTIVE' ? 'bg-red-600/90 hover:bg-red-500 border-red-500/50' : 'bg-green-600/90 hover:bg-green-500 border-green-500/50'}`}>
-                                                    {c.status === 'ACTIVE' ? '⊘ Disable' : '✓ Enable'}
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                            {clients.length === 0 && !loading && (
-                                <tr>
-                                    <td colSpan={4} className="py-8 text-center text-gray-500">No clients found. Create one.</td>
+                    <div className="overflow-y-auto overflow-x-auto border border-gray-700 rounded-lg max-h-[calc(100vh-200px)] lg:max-h-[calc(100vh-220px)]">
+                        <table className="w-full text-left text-sm relative">
+                            <thead className="bg-gray-800 sticky top-0 z-10 shadow-sm">
+                                <tr className="border-b border-gray-700 text-gray-400">
+                                    <th className="py-3 px-4">Username</th>
+                                    <th className="py-3 px-4">Status</th>
+                                    <th className="py-3 px-4 text-right">Total Capital</th>
+                                    <th className="py-3 px-4 text-right">Used Margin</th>
+                                    <th className="py-3 px-4 text-right">Running M2M</th>
+                                    <th className="py-3 px-4 text-right">Alloc M2M</th>
+                                    <th className="py-3 px-4 text-right">Max Loss Limit</th>
+                                    <th className="py-3 px-4 text-center">Actions</th>
                                 </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div >
+                            </thead>
+                            <tbody>
+                                {clients.map(c => {
+                                    // Calculate live values
+                                    let usedCapital = 0;
+                                    let runningM2M = 0;
+
+                                    (c.positions || []).forEach(p => {
+                                        const stock = stocks.find(s => s.id === p.token);
+                                        const ltp = stock ? stock.ltp : 0;
+
+                                        if (p.nQty !== 0) {
+                                            usedCapital += (p.nAvg * Math.abs(p.nQty));
+                                            runningM2M += (ltp - p.nAvg) * p.nQty;
+                                        }
+                                    });
+
+                                    return (
+                                        <tr key={c.id} className="border-b border-gray-700/50 hover:bg-gray-700/20">
+                                            <td className="py-3 px-4 font-medium text-base">{c.username}</td>
+                                            <td className="py-3 px-4">
+                                                <span className={`px-2 py-1 text-xs rounded-full ${c.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                                    {c.status}
+                                                </span>
+                                            </td>
+                                            <td className="py-3 px-4 text-right font-mono font-bold text-blue-400">{c.totalCapital?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                            <td className="py-3 px-4 text-right font-mono text-yellow-400">{usedCapital.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                            <td className={`py-3 px-4 text-right font-mono font-medium ${runningM2M > 0 ? 'text-green-500' : runningM2M < 0 ? 'text-red-500' : ''}`}>
+                                                {runningM2M.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td className="py-3 px-4 text-right font-mono text-purple-400">
+                                                <div className="flex items-center justify-end space-x-2">
+                                                    <span>{(c.allocatedM2m || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                                    <button onClick={() => handleUpdateAllocatedM2M(c)} className="text-blue-400 hover:text-blue-300 text-xs">✏️</button>
+                                                </div>
+                                            </td>
+                                            <td className="py-3 px-4 text-right font-mono text-orange-400">
+                                                <div className="flex items-center justify-end space-x-2">
+                                                    <span>{c.maxLossLimit !== undefined && c.maxLossLimit !== null ? `₹${c.maxLossLimit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : 'Not Set'}</span>
+                                                    <button onClick={() => handleUpdateMaxLoss(c)} className="text-blue-400 hover:text-blue-300 text-xs">✏️</button>
+                                                </div>
+                                            </td>
+                                            <td className="py-3 px-4">
+                                                <div className="flex flex-col gap-1.5 w-[300px] mx-auto">
+                                                    {/* Row 1: Core Actions */}
+                                                    <div className="grid grid-cols-4 gap-1.5">
+                                                        <button onClick={() => handleViewPositions(c)} className="w-full py-1.5 bg-indigo-600/90 hover:bg-indigo-500 border border-indigo-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap text-center">Positions</button>
+                                                        <button onClick={() => handleSquareOff(c)} className="w-full py-1.5 bg-orange-600/90 hover:bg-orange-500 border border-orange-500/50 rounded text-[11px] font-bold transition-all active:scale-95 whitespace-nowrap text-center">Square Off</button>
+                                                        <button onClick={() => handleUpdateCapital(c)} className="w-full py-1.5 bg-yellow-600/90 hover:bg-yellow-500 border border-yellow-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap text-center">Capital</button>
+                                                        <button onClick={() => handleUpdateAllocatedM2M(c)} className="w-full py-1.5 bg-purple-600/90 hover:bg-purple-500 border border-purple-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap text-center">M2M</button>
+                                                    </div>
+                                                    {/* Row 2: Settings */}
+                                                    <div className="grid grid-cols-4 gap-1.5">
+                                                        <button onClick={() => setRmsPanelClient(c)} className="w-full py-1.5 bg-sky-600/90 hover:bg-sky-500 border border-sky-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap text-center">RMS Rules</button>
+                                                        <button onClick={() => setResetClientId(c.id)} className="w-full py-1.5 bg-emerald-600/90 hover:bg-emerald-500 border border-emerald-500/50 rounded text-[11px] font-semibold transition-all active:scale-95 whitespace-nowrap text-center">Password</button>
+                                                        <button onClick={() => handleToggleStatus(c)} className={`col-span-2 w-full py-1.5 rounded text-[11px] font-bold transition-all active:scale-95 whitespace-nowrap text-center border ${c.status === 'ACTIVE' ? 'bg-red-600/90 hover:bg-red-500 border-red-500/50' : 'bg-green-600/90 hover:bg-green-500 border-green-500/50'}`}>
+                                                            {c.status === 'ACTIVE' ? '⊘ Disable' : '✓ Enable'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {clients.length === 0 && !loading && (
+                                    <tr>
+                                        <td colSpan={4} className="py-8 text-center text-gray-500">No clients found. Create one.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
                 {
                     viewedClientId && (
@@ -446,8 +485,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
                         </div>
                     )
                 }
-            </div >
-        </div >
+            </div>
+        </div>
     );
 };
 

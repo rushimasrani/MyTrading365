@@ -432,6 +432,7 @@ app.post('/api/admin/clients', async (req, res) => {
     parentUserId: targetMasterId,
     capital: Number(data.capital),
     totalCapital: Number(data.capital),
+    maxLossLimit: data.maxLossLimit !== undefined && data.maxLossLimit !== null && data.maxLossLimit !== '' ? Number(data.maxLossLimit) : undefined,
     createdAt: new Date().toISOString()
   };
 
@@ -1331,6 +1332,21 @@ function startRiskEngine() {
           }
         });
 
+        // 1. Check Max Loss Limit First
+        if (user.maxLossLimit !== undefined && user.maxLossLimit !== null && user.maxLossLimit > 0) {
+          if (currentRunningM2M <= -user.maxLossLimit) {
+            console.log(`[RISK ENGINE] Auto Square Off triggered due to Max Loss Limit breach for ${user.username}. M2M: ${currentRunningM2M}, Limit: -${user.maxLossLimit}`);
+            await squareOffClient(user.id);
+
+            const message = JSON.stringify({ type: 'risk_alert', accountId: user.id, alertType: 'SQUARE_OFF', message: `Your account has breached the Maximum Loss Limit of ₹${user.maxLossLimit}. All positions have been squared off to prevent further loss.` });
+            wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) client.send(message);
+            });
+            continue; // Skip capital checks for this loop since we already squared off
+          }
+        }
+
+        // 2. Main Capital Wipeout Check
         if (currentRunningM2M <= -user.totalCapital && user.totalCapital > 0) {
           console.log(`[RISK ENGINE] Auto Square-Off Triggered for ${user.username}. M2M: ${currentRunningM2M}, Capital: ${user.totalCapital}`);
           await squareOffClient(user.id);

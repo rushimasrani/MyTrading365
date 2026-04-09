@@ -547,3 +547,150 @@ export const getPendingLimitOrders = async (): Promise<any[]> => {
     );
     return res.rows;
 };
+
+// =============================================
+// Auto Expiry Square-Off Query
+// =============================================
+
+export const getExpiringOpenPositions = async (todayDateStr: string, exchangeFilter?: string): Promise<{
+    user_id: string;
+    username: string;
+    token: string;
+    instrument: string;
+    net_quantity: number;
+    expiry: string;
+    instrument_type: string;
+    exchange: string;
+}[]> => {
+    const params: any[] = [todayDateStr];
+    let exchangeClause = '';
+    if (exchangeFilter) {
+        exchangeClause = ' AND i.exchange = $2';
+        params.push(exchangeFilter);
+    }
+
+    const res = await query(`
+        SELECT p.user_id, p.token, p.instrument, p.net_quantity,
+               i.expiry, i.instrument_type, i.exchange,
+               u.username
+        FROM positions p
+        JOIN instruments i ON p.token = i.token
+        JOIN users u ON p.user_id = u.id
+        WHERE p.net_quantity != 0
+          AND i.expiry IS NOT NULL
+          AND LEFT(i.expiry, 10) = $1
+          AND (
+            i.instrument_type LIKE 'FUT%'
+            OR i.instrument_type IN ('CE', 'PE')
+          )
+          AND u.role = 'CLIENT'
+          AND u.status = 'ACTIVE'
+          ${exchangeClause}
+    `, params);
+
+    return res.rows.map(r => ({
+        user_id: r.user_id,
+        username: r.username,
+        token: r.token,
+        instrument: r.instrument,
+        net_quantity: Number(r.net_quantity),
+        expiry: r.expiry,
+        instrument_type: r.instrument_type,
+        exchange: r.exchange
+    }));
+};
+
+// =============================================
+// Default Watchlist — Auto Rollover Support
+// =============================================
+
+export const ensureDefaultWatchlistTable = async () => {
+    await query(`
+        CREATE TABLE IF NOT EXISTS default_watchlist (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(50) NOT NULL,
+            token VARCHAR(50) NOT NULL,
+            tradingsymbol VARCHAR(100) NOT NULL,
+            exchange VARCHAR(20) NOT NULL,
+            expiry VARCHAR(50),
+            instrument_type VARCHAR(20) NOT NULL DEFAULT 'FUTIDX',
+            is_default BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `);
+};
+
+export const seedDefaultWatchlist = async () => {
+    // Only seed if table is empty — never overwrite existing data
+    const countResult = await query('SELECT COUNT(*) FROM default_watchlist');
+    const rowCount = parseInt(countResult.rows[0].count, 10);
+    if (rowCount > 0) {
+        console.log(`[DEFAULT WATCHLIST] Table already has ${rowCount} instrument(s). Skipping seed.`);
+        return;
+    }
+
+    console.log('[DEFAULT WATCHLIST] Table is empty. Seeding default instruments...');
+    const defaultSymbols = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
+    const today = new Date().toISOString().split('T')[0];
+
+    for (const symbol of defaultSymbols) {
+        const result = await query(`
+            SELECT token, tradingsymbol, exchange, expiry, instrument_type
+            FROM instruments
+            WHERE tradingsymbol LIKE $1
+              AND instrument_type LIKE 'FUT%'
+              AND expiry > $2
+            ORDER BY expiry ASC
+            LIMIT 1
+        `, [`${symbol}%FUT`, today]);
+
+        if (result.rows.length > 0) {
+            const inst = result.rows[0];
+            await query(`
+                INSERT INTO default_watchlist (symbol, token, tradingsymbol, exchange, expiry, instrument_type, is_default)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            `, [symbol, inst.token, inst.tradingsymbol, inst.exchange, inst.expiry, inst.instrument_type]);
+            console.log(`[DEFAULT WATCHLIST] ✅ Seeded: ${symbol} → ${inst.tradingsymbol} (token: ${inst.token})`);
+        } else {
+            console.log(`[DEFAULT WATCHLIST] ⚠️ No active FUT contract found for ${symbol}. Skipping.`);
+        }
+    }
+};
+
+export const getDefaultWatchlistItems = async (): Promise<{
+    id: number;
+    symbol: string;
+    token: string;
+    tradingsymbol: string;
+    exchange: string;
+    expiry: string | null;
+    instrument_type: string;
+    is_default: boolean;
+}[]> => {
+    const res = await query('SELECT * FROM default_watchlist ORDER BY id ASC');
+    return res.rows.map(r => ({
+        id: r.id,
+        symbol: r.symbol,
+        token: r.token,
+        tradingsymbol: r.tradingsymbol,
+        exchange: r.exchange,
+        expiry: r.expiry,
+        instrument_type: r.instrument_type,
+        is_default: r.is_default
+    }));
+};
+
+export const updateDefaultWatchlistToken = async (
+    id: number,
+    token: string,
+    tradingsymbol: string,
+    exchange: string,
+    expiry: string
+) => {
+    await query(`
+        UPDATE default_watchlist
+        SET token = $1, tradingsymbol = $2, exchange = $3, expiry = $4, updated_at = NOW()
+        WHERE id = $5
+    `, [token, tradingsymbol, exchange, expiry, id]);
+};

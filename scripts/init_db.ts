@@ -123,6 +123,22 @@ const initializeDatabase = async () => {
       )
     `);
 
+    // Create default_watchlist table for auto-rollover of expired futures
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS default_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(50) NOT NULL,
+        token VARCHAR(50) NOT NULL,
+        tradingsymbol VARCHAR(100) NOT NULL,
+        exchange VARCHAR(20) NOT NULL,
+        expiry VARCHAR(50),
+        instrument_type VARCHAR(20) NOT NULL DEFAULT 'FUTIDX',
+        is_default BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Create indexes for performance
     console.log("Applying database indexes...");
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_username ON users(username)`);

@@ -187,11 +187,11 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
         const result = await placeOrder(stock, type, qty, price, orderType);
         if (result) {
             if (result.orderStatus === 'EXECUTED' && result.tPrice !== undefined) {
-                generateLog(stock.dispName, `${qty}, ${Number(result.tPrice).toFixed(2)} ${orderType} Executed`);
+                generateLog(stock.dispName, `${type}, Qty:${qty}, Price:${Number(result.tPrice).toFixed(2)}, ${orderType}, Executed`);
             } else if (result.orderStatus === 'PENDING') {
-                generateLog(stock.dispName, `${qty} @ ${price.toFixed(2)} LIMIT Pending | Margin Blocked: ₹${(price * qty).toFixed(2)}`);
+                generateLog(stock.dispName, `${type}, Qty:${qty} @ Price:${price.toFixed(2)}, LIMIT, Pending | Margin Blocked: ₹${(price * qty).toFixed(2)}`);
             } else if (result.orderStatus === 'REJECTED') {
-                generateLog(stock.dispName, `REJECTED: ${result.error || 'Insufficient funds'}`);
+                generateLog(stock.dispName, `${type}, REJECTED: ${result.error || 'Insufficient funds'}`);
             }
         }
     };

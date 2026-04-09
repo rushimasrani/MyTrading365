@@ -9,7 +9,7 @@ import { logTick } from './utils/logger';
 import { initUpstoxWS, closeUpstoxWS, subscribeToInstruments } from './services/upstoxWebSocket';
 import zlib from 'zlib';
 import bcrypt from 'bcryptjs';
-import { getUsers, getUserById, getUserByUsername, addUser, updateUser, deleteUser, executeTradeTransaction, getTradesForUser, calculatePositionsForUser, getRMSLimits, addRMSLimit, updateRMSLimit, deleteRMSLimit, cleanupClosedPositions, cleanupOldTradeHistory, createOrder, getOrdersForUser, updateOrderStatus, modifyOrder, cancelOrder, getPendingLimitOrders, getBlockedMarginForUser } from './services/userStore';
+import { getUsers, getUserById, getUserByUsername, addUser, updateUser, deleteUser, executeTradeTransaction, getTradesForUser, calculatePositionsForUser, getRMSLimits, addRMSLimit, updateRMSLimit, deleteRMSLimit, cleanupClosedPositions, cleanupOldTradeHistory, createOrder, getOrdersForUser, updateOrderStatus, modifyOrder, cancelOrder, getPendingLimitOrders, getBlockedMarginForUser, getExpiringOpenPositions, ensureDefaultWatchlistTable, seedDefaultWatchlist, getDefaultWatchlistItems, updateDefaultWatchlistToken } from './services/userStore';
 import { getClient } from './services/db';
 import cron from 'node-cron';
 import format from 'pg-format';
@@ -217,6 +217,95 @@ async function refreshInstruments() {
   }
 }
 
+// =============================================
+// Auto-Rollover of Expired Futures Contracts
+// =============================================
+
+async function rolloverExpiredFutures() {
+  const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  console.log(`\n=================================================`);
+  console.log(`[AUTO ROLLOVER] Job started at ${timestamp}`);
+  console.log(`=================================================`);
+
+  try {
+    const items = await getDefaultWatchlistItems();
+
+    if (items.length === 0) {
+      console.log('[AUTO ROLLOVER] No default watchlist items found. Nothing to do.');
+      return;
+    }
+
+    // Get today's date in IST as YYYY-MM-DD
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const todayStr = nowIST.getFullYear() + '-' +
+      String(nowIST.getMonth() + 1).padStart(2, '0') + '-' +
+      String(nowIST.getDate()).padStart(2, '0');
+
+    let rolledOver = 0;
+
+    for (const item of items) {
+      // Only process default futures instruments
+      if (!item.is_default) continue;
+      if (!item.instrument_type || !item.instrument_type.startsWith('FUT')) continue;
+
+      // Check if this contract is expired
+      if (!item.expiry) continue;
+      const expiryDate = item.expiry.substring(0, 10); // YYYY-MM-DD
+      if (expiryDate >= todayStr) {
+        // Not expired yet
+        continue;
+      }
+
+      console.log(`[AUTO ROLLOVER] Expired: ${item.tradingsymbol} (expiry: ${expiryDate})`);
+
+      // Find next available contract from instruments table
+      const client = await getClient();
+      try {
+        const result = await client.query(`
+          SELECT token, tradingsymbol, exchange, expiry, instrument_type
+          FROM instruments
+          WHERE tradingsymbol LIKE $1
+            AND instrument_type LIKE 'FUT%'
+            AND expiry > $2
+          ORDER BY expiry ASC
+          LIMIT 1
+        `, [`${item.symbol}%FUT`, todayStr]);
+
+        if (result.rows.length > 0) {
+          const next = result.rows[0];
+          const oldName = formatFutName(item.tradingsymbol, item.symbol, item.expiry || '', item.instrument_type);
+          const newName = formatFutName(next.tradingsymbol, item.symbol, next.expiry, next.instrument_type);
+
+          await updateDefaultWatchlistToken(
+            item.id,
+            next.token,
+            next.tradingsymbol,
+            next.exchange,
+            next.expiry
+          );
+
+          rolledOver++;
+          console.log(`[AUTO ROLLOVER] ✅ Replaced: ${oldName} → ${newName} (token: ${next.token})`);
+        } else {
+          console.log(`[AUTO ROLLOVER] ⚠️ No next FUT contract found for ${item.symbol}. Keeping current entry.`);
+        }
+      } finally {
+        client.release();
+      }
+    }
+
+    if (rolledOver === 0) {
+      console.log('[AUTO ROLLOVER] No expired contracts found. All defaults are active.');
+    } else {
+      console.log(`[AUTO ROLLOVER] ✅ Rolled over ${rolledOver} contract(s).`);
+    }
+
+    console.log(`[AUTO ROLLOVER] Job completed at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  } catch (err) {
+    console.error('[AUTO ROLLOVER] ❌ Critical error:', err);
+  }
+}
+
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', instrumentsLoaded: globalInstruments.length > 0 });
@@ -269,58 +358,98 @@ app.get('/api/instruments/search', (req, res) => {
   res.json(matches);
 });
 
-app.get('/api/instruments/default-watchlist', (req, res) => {
-  const now = Date.now();
-  const targetNames = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
-  const defaults: any[] = [];
+app.get('/api/instruments/default-watchlist', async (req, res) => {
+  try {
+    // Primary source: database-backed default watchlist
+    const dbItems = await getDefaultWatchlistItems();
 
-  for (const targetName of targetNames) {
-    let bestMatch = null;
-    let closestExpiryTime = Infinity;
+    if (dbItems.length > 0) {
+      const defaults: any[] = [];
 
-    for (const inst of globalInstruments) {
-      if (!inst.instrument_type || !inst.instrument_type.startsWith('FUT')) continue;
+      for (const item of dbItems) {
+        // Enrich with display name from globalInstruments cache
+        const cachedInst = globalInstruments.find(g => g.token === item.token);
+        const dispName = cachedInst
+          ? cachedInst.dispName
+          : formatFutName(item.tradingsymbol, item.symbol, item.expiry || '', item.instrument_type);
+        const upstox_key = cachedInst ? cachedInst.upstox_key : '';
 
-      // Strict regex matching to avoid variants like GOLDM, SILVERMIC, GOLDTEN
-      // We extract the base string out of things like "NIFTY26MARFUT" using regex
-      const match = inst.tradingsymbol.match(/^([A-Z]+)\d{2}[A-Z]{3}FUT$/);
-      if (!match || match[1] !== targetName) continue;
+        defaults.push({
+          id: item.token,
+          symbol: item.tradingsymbol,
+          exchange: item.exchange,
+          dispName,
+          upstox_key,
+          ltp: 0,
+          change: 0,
+          bQty: 0,
+          bid: 0,
+          ask: 0,
+          aQty: 0,
+          open: 0,
+          high: 0,
+          low: 0,
+          pClose: 0,
+          volume: 0
+        });
+      }
 
-      if (!inst.expiry) continue;
-      const expTime = new Date(inst.expiry).getTime();
+      return res.json(defaults);
+    }
 
-      // Add 24 hours to ensure it is visible until end of expiry day
-      if (expTime + 86400000 < now) continue;
+    // Fallback: compute from globalInstruments (original logic)
+    const now = Date.now();
+    const targetNames = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
+    const defaults: any[] = [];
 
-      if (expTime < closestExpiryTime) {
-        closestExpiryTime = expTime;
-        bestMatch = inst;
+    for (const targetName of targetNames) {
+      let bestMatch = null;
+      let closestExpiryTime = Infinity;
+
+      for (const inst of globalInstruments) {
+        if (!inst.instrument_type || !inst.instrument_type.startsWith('FUT')) continue;
+
+        const match = inst.tradingsymbol.match(/^([A-Z]+)\d{2}[A-Z]{3}FUT$/);
+        if (!match || match[1] !== targetName) continue;
+
+        if (!inst.expiry) continue;
+        const expTime = new Date(inst.expiry).getTime();
+
+        if (expTime + 86400000 < now) continue;
+
+        if (expTime < closestExpiryTime) {
+          closestExpiryTime = expTime;
+          bestMatch = inst;
+        }
+      }
+
+      if (bestMatch) {
+        defaults.push({
+          id: bestMatch.token,
+          symbol: bestMatch.tradingsymbol,
+          exchange: bestMatch.exchange,
+          dispName: bestMatch.dispName,
+          upstox_key: bestMatch.upstox_key,
+          ltp: 0,
+          change: 0,
+          bQty: 0,
+          bid: 0,
+          ask: 0,
+          aQty: 0,
+          open: 0,
+          high: 0,
+          low: 0,
+          pClose: 0,
+          volume: 0
+        });
       }
     }
 
-    if (bestMatch) {
-      defaults.push({
-        id: bestMatch.token,
-        symbol: bestMatch.tradingsymbol,
-        exchange: bestMatch.exchange,
-        dispName: bestMatch.dispName,
-        upstox_key: bestMatch.upstox_key,
-        ltp: 0,
-        change: 0,
-        bQty: 0,
-        bid: 0,
-        ask: 0,
-        aQty: 0,
-        open: 0,
-        high: 0,
-        low: 0,
-        pClose: 0,
-        volume: 0
-      });
-    }
+    res.json(defaults);
+  } catch (err) {
+    console.error('[DEFAULT WATCHLIST] Error serving default watchlist:', err);
+    res.status(500).json({ error: 'Failed to load default watchlist' });
   }
-
-  res.json(defaults);
 });
 
 // Auth Routes
@@ -640,6 +769,150 @@ async function squareOffClient(clientId: string) {
   }
 
   return { success: true, squaredOffCount: executedTrades.length, trades: executedTrades };
+}
+
+// =============================================
+// Auto Expiry Square-Off System
+// =============================================
+
+// In-memory tracker to prevent duplicate square-offs: "YYYY-MM-DD:token:userId"
+const expirySquareOffTracker = new Set<string>();
+
+// Targeted square-off: only closes positions matching the given expiring token set
+async function squareOffExpiringInstrument(clientId: string, expiringTokens: Set<string>) {
+  const user = await getUserById(clientId);
+  if (!user) return { success: false, error: 'User not found' };
+
+  const positions = await calculatePositionsForUser(clientId);
+  const executedTrades = [];
+
+  for (const pos of positions) {
+    if (pos.nQty === 0) continue;
+    if (!expiringTokens.has(pos.token)) continue; // Only square off expiring instruments
+
+    const action = pos.nQty > 0 ? 'SELL' : 'BUY';
+    const qty = Math.abs(pos.nQty);
+
+    let executionPrice = 0;
+    const liveQuote = latestMarketData[pos.token];
+
+    if (!liveQuote) continue;
+
+    if (action === 'BUY') {
+      if (!liveQuote.ask || liveQuote.ask <= 0) continue;
+      executionPrice = liveQuote.ask;
+    } else {
+      if (!liveQuote.bid || liveQuote.bid <= 0) continue;
+      executionPrice = liveQuote.bid;
+    }
+
+    const trade = {
+      id: Math.random().toString(36).substr(2, 9),
+      exch: pos.exch,
+      action: action as 'BUY' | 'SELL',
+      scrip: pos.scrip,
+      token: pos.token,
+      tQty: qty,
+      tPrice: executionPrice,
+      account: clientId,
+      oid: Math.random().toString().substr(2, 6),
+      tid: Math.random().toString().substr(2, 6),
+      eTrdNum: Math.random().toString().substr(2, 6),
+      eOrdNum: `202602${Math.random().toString().substr(2, 6)}`,
+      trdTime: new Date().toLocaleTimeString('en-GB', { hour12: false })
+    };
+
+    await executeTradeTransaction(trade, 0);
+    executedTrades.push(trade);
+  }
+
+  return { success: true, squaredOffCount: executedTrades.length, trades: executedTrades };
+}
+
+// Main orchestrator: finds all expiring positions and squares them off
+// exchangeFilter: optional exchange to filter (e.g. 'MCX_FO')
+// logLabel: label for structured logs (e.g. 'MCX')
+async function squareOffExpiringPositions(exchangeFilter?: string, logLabel?: string) {
+  const tag = logLabel ? `[AUTO EXPIRY SQUAREOFF ${logLabel}]` : '[AUTO EXPIRY SQUAREOFF]';
+  const reasonSuffix = logLabel ? ` (${logLabel})` : '';
+  const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  console.log(`\n=================================================`);
+  console.log(`${tag} Job started at ${timestamp}`);
+  console.log(`=================================================`);
+
+  try {
+    // Get today's date in IST as YYYY-MM-DD
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const todayStr = nowIST.getFullYear() + '-' +
+      String(nowIST.getMonth() + 1).padStart(2, '0') + '-' +
+      String(nowIST.getDate()).padStart(2, '0');
+
+    const expiringPositions = await getExpiringOpenPositions(todayStr, exchangeFilter);
+
+    if (expiringPositions.length === 0) {
+      console.log(`${tag} No expiring open positions found for ${todayStr}. Nothing to do.`);
+      return;
+    }
+
+    console.log(`${tag} Found ${expiringPositions.length} expiring position(s) across clients.`);
+
+    // Group positions by user_id
+    const userPositionsMap = new Map<string, { username: string; tokens: Set<string>; instruments: string[] }>();
+
+    for (const pos of expiringPositions) {
+      const trackerKey = `${todayStr}:${pos.token}:${pos.user_id}`;
+
+      // Skip if already squared off today
+      if (expirySquareOffTracker.has(trackerKey)) {
+        console.log(`${tag} Skipping ${pos.instrument} for ${pos.username} — already processed.`);
+        continue;
+      }
+
+      if (!userPositionsMap.has(pos.user_id)) {
+        userPositionsMap.set(pos.user_id, { username: pos.username, tokens: new Set(), instruments: [] });
+      }
+      const entry = userPositionsMap.get(pos.user_id)!;
+      entry.tokens.add(pos.token);
+      entry.instruments.push(pos.instrument);
+
+      // Mark as processed
+      expirySquareOffTracker.add(trackerKey);
+    }
+
+    // Process each client
+    for (const [userId, data] of userPositionsMap) {
+      console.log(`${tag} Squaring off client: ${data.username} | Instruments: ${data.instruments.join(', ')} | Reason: Contract Expiry${reasonSuffix}`);
+
+      try {
+        const result = await squareOffExpiringInstrument(userId, data.tokens);
+
+        if (result.success && result.squaredOffCount > 0) {
+          console.log(`${tag} ✅ Client: ${data.username} | Squared off ${result.squaredOffCount} position(s) successfully.`);
+
+          // Send WebSocket notification to frontends
+          const message = JSON.stringify({
+            type: 'expiry_squareoff',
+            accountId: userId,
+            alertType: 'EXPIRY_SQUARE_OFF',
+            message: `Auto Square Off executed due to contract expiry${reasonSuffix}. ${result.squaredOffCount} position(s) closed: ${data.instruments.join(', ')}`,
+            instruments: data.instruments,
+            squaredOffCount: result.squaredOffCount
+          });
+          wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) client.send(message);
+          });
+        } else {
+          console.log(`${tag} ⚠️ Client: ${data.username} | No trades executed (positions may lack live quotes).`);
+        }
+      } catch (err) {
+        console.error(`${tag} ❌ Error squaring off client ${data.username}:`, err);
+      }
+    }
+
+    console.log(`${tag} Job completed at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  } catch (err) {
+    console.error(`${tag} Critical error in expiry square-off job:`, err);
+  }
 }
 
 app.post('/api/admin/clients/:id/squareoff', async (req, res) => {
@@ -1385,6 +1658,10 @@ cron.schedule('0 1 * * *', async () => {
   console.log(`[CRON] Timestamp: ${timestamp}`);
   console.log(`[CRON] Order Book & Trade Book will show today's records only.`);
   console.log(`=================================================\n`);
+
+  // Reset the expiry square-off tracker for the new trading day
+  expirySquareOffTracker.clear();
+  console.log(`[CRON] Expiry square-off tracker cleared for new day.`);
 }, { timezone: 'Asia/Kolkata' });
 
 // 02:00 AM IST — Net Position Cleanup (remove closed positions where net_qty = 0)
@@ -1401,6 +1678,12 @@ cron.schedule('0 3 * * *', async () => {
   await cleanupOldTradeHistory();
 }, { timezone: 'Asia/Kolkata' });
 
+// 03:30 AM IST — Auto-Rollover of Expired Futures in Default Watchlist
+cron.schedule('30 3 * * *', async () => {
+  console.log(`[CRON] 03:30 AM IST — Auto-Rollover of Expired Futures triggered`);
+  await rolloverExpiredFutures();
+}, { timezone: 'Asia/Kolkata' });
+
 // 04:00 AM IST — Automated Instrument Master Refresh
 cron.schedule('0 4 * * *', async () => {
   const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -1408,16 +1691,40 @@ cron.schedule('0 4 * * *', async () => {
   await refreshInstruments();
 }, { timezone: 'Asia/Kolkata' });
 
+// 03:28 PM IST — Auto Square-Off for Expiring NSE/BSE Derivative Contracts (Weekdays Only)
+cron.schedule('28 15 * * 1-5', async () => {
+  console.log(`[CRON] 03:28 PM IST — Auto Expiry Square-Off (NSE/BSE) triggered`);
+  await squareOffExpiringPositions(); // All exchanges (NSE/BSE derivatives)
+}, { timezone: 'Asia/Kolkata' });
+
+// 11:28 PM IST — Auto Square-Off for Expiring MCX Derivative Contracts (Weekdays Only)
+cron.schedule('28 23 * * 1-5', async () => {
+  console.log(`[CRON] 11:28 PM IST — Auto Expiry Square-Off (MCX) triggered`);
+  await squareOffExpiringPositions('MCX_FO', 'MCX');
+}, { timezone: 'Asia/Kolkata' });
+
 console.log('[MAINTENANCE] Daily maintenance jobs scheduled (IST):');
 console.log('  • 01:00 AM — Session Reset (Order Book + Trade Book)');
 console.log('  • 02:00 AM — Net Position Cleanup (net_qty = 0)');
 console.log('  • 03:00 AM — 60-Day Data Retention (order_book + trade_history)');
+console.log('  • 03:30 AM — Auto-Rollover of Expired Futures (Default Watchlist)');
 console.log('  • 04:00 AM — Automatic Instrument Master Refresh');
+console.log('  • 03:28 PM — Auto Square-Off for Expiring Derivatives (Mon-Fri)');
+console.log('  • 11:28 PM — Auto Square-Off for Expiring MCX Derivatives (Mon-Fri)');
 
 async function startServer() {
   try {
     // Await instrument fetch before HTTP and WebSocket launch
     await refreshInstruments();
+
+    // Ensure default_watchlist table exists and seed if empty (non-destructive)
+    try {
+      await ensureDefaultWatchlistTable();
+      console.log('[STARTUP] ✅ default_watchlist table ensured.');
+      await seedDefaultWatchlist();
+    } catch (e) {
+      console.error('[STARTUP] ⚠️ default_watchlist setup failed (non-critical):', e);
+    }
 
     if (process.env.NODE_ENV !== 'production') {
       const vite = await createViteServer({

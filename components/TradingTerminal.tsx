@@ -187,11 +187,11 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
         const result = await placeOrder(stock, type, qty, price, orderType);
         if (result) {
             if (result.orderStatus === 'EXECUTED' && result.tPrice !== undefined) {
-                generateLog(stock.dispName, `${type}, Qty:${qty}, Price:${Number(result.tPrice).toFixed(2)}, ${orderType}, Executed`);
+                generateLog(stock.dispName, `${type}, ${stock.dispName}, Qty:${qty}, Price:${Number(result.tPrice).toFixed(2)}, ${orderType}, Executed`);
             } else if (result.orderStatus === 'PENDING') {
-                generateLog(stock.dispName, `${type}, Qty:${qty} @ Price:${price.toFixed(2)}, LIMIT, Pending | Margin Blocked: ₹${(price * qty).toFixed(2)}`);
+                generateLog(stock.dispName, `${type}, ${stock.dispName}, Qty:${qty}, Price:${price.toFixed(2)}, LIMIT, Pending | Margin Blocked: ₹${(price * qty).toFixed(2)}`);
             } else if (result.orderStatus === 'REJECTED') {
-                generateLog(stock.dispName, `${type}, REJECTED: ${result.error || 'Insufficient funds'}`);
+                generateLog(stock.dispName, `${type}, ${stock.dispName}, REJECTED: ${result.error || 'Insufficient funds'}`);
             }
         }
     };
@@ -393,12 +393,14 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
                         setActiveMobileTab('watchlist');
                     }}
                     onCancelOrder={async (id) => {
+                        const order = orders.find(o => o.id === id);
                         await cancelOrder(id);
-                        generateLog('ORDER', 'Order Cancelled');
+                        generateLog(order?.scrip || 'ORDER', `${order?.action || '—'}, ${order?.scrip || 'Unknown'}, Cancelled`);
                     }}
                     onModifyOrder={async (id, price, quantity) => {
+                        const order = orders.find(o => o.id === id);
                         await modifyOrder(id, price, quantity);
-                        generateLog('ORDER', `Order Modified: Price=${price}, Qty=${quantity}`);
+                        generateLog(order?.scrip || 'ORDER', `${order?.action || '—'}, ${order?.scrip || 'Unknown'}, Modified: Price=${price}, Qty=${quantity}`);
                     }}
                 />
             )}

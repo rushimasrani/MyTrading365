@@ -17,7 +17,11 @@ import format from 'pg-format';
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // Prevent browsers from caching authenticated API responses
@@ -764,7 +768,8 @@ async function squareOffClient(clientId: string) {
       trdTime: new Date().toLocaleTimeString('en-GB', { hour12: false })
     };
 
-    await executeTradeTransaction(trade, 0);
+    // Auto square-off generates a new order entry
+    await executeTradeTransaction(trade, 0, true, user.username);
     executedTrades.push(trade);
   }
 
@@ -822,7 +827,8 @@ async function squareOffExpiringInstrument(clientId: string, expiringTokens: Set
       trdTime: new Date().toLocaleTimeString('en-GB', { hour12: false })
     };
 
-    await executeTradeTransaction(trade, 0);
+    // Auto square-off generates a new order entry
+    await executeTradeTransaction(trade, 0, true, user.username);
     executedTrades.push(trade);
   }
 
@@ -1040,8 +1046,11 @@ function validateTradingSession(exchange: string): string | null {
   const minutes = now.getMinutes();
   const currentMinutes = hours * 60 + minutes;
 
+  // Normalize exchange: handle 'MCX', 'MCX_FO', 'mcx_fo', etc.
+  const normalizedExchange = (exchange || '').toUpperCase();
+
   // MCX: 09:00 – 23:30 IST
-  if (exchange === 'MCX_FO') {
+  if (normalizedExchange === 'MCX_FO' || normalizedExchange === 'MCX' || normalizedExchange.startsWith('MCX')) {
     const start = 9 * 60;       // 540
     const end = 23 * 60 + 30;   // 1410
     if (currentMinutes < start || currentMinutes >= end) {

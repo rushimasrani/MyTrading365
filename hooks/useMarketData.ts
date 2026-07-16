@@ -1,16 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
-import { StockData } from '../types';
+import { StockData, NetPositionRecord, OrderRecord } from '../types';
 
-export const useMarketData = (initialStocks: StockData[], onRiskAlert?: (msg: any) => void, onOrderUpdate?: (msg: any) => void) => {
+export const useMarketData = (
+  initialStocks: StockData[], 
+  positions: NetPositionRecord[], 
+  orders: OrderRecord[], 
+  onRiskAlert?: (msg: any) => void, 
+  onOrderUpdate?: (msg: any) => void
+) => {
   const [stocks, setStocks] = useState<StockData[]>(initialStocks);
   const wsRef = useRef<WebSocket | null>(null);
-  const pendingTokens = useRef<Set<string>>(new Set(initialStocks.map(s => s.id)));
+  
+  // Track currently active subscriptions on the server for this client
+  const activeTokens = useRef<Set<string>>(new Set());
 
+  // We no longer manually call subscribe from the UI. 
+  // It is fully derived from UI Watchlist (stocks), positions, and orders.
   const subscribe = (tokens: string[]) => {
-    tokens.forEach(t => pendingTokens.current.add(t));
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'subscribe', tokens: Array.from(pendingTokens.current) }));
-    }
+    // Kept for backward compatibility if needed, but no-op now since useEffect handles it.
   };
 
   useEffect(() => {
@@ -23,8 +30,8 @@ export const useMarketData = (initialStocks: StockData[], onRiskAlert?: (msg: an
 
     ws.onopen = () => {
       console.log('Connected to Market Data Stream');
-      if (pendingTokens.current.size > 0) {
-        ws.send(JSON.stringify({ type: 'subscribe', tokens: Array.from(pendingTokens.current) }));
+      if (activeTokens.current.size > 0) {
+        ws.send(JSON.stringify({ type: 'subscribe', tokens: Array.from(activeTokens.current) }));
       }
     };
 
@@ -77,6 +84,42 @@ export const useMarketData = (initialStocks: StockData[], onRiskAlert?: (msg: an
       }
     };
   }, []);
+
+  // Compute required tokens and send diffs to server
+  useEffect(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    const requiredTokens = new Set<string>();
+    stocks.forEach(s => requiredTokens.add(s.id));
+    positions.filter(p => p.nQty !== 0).forEach(p => requiredTokens.add(p.token));
+    orders.filter(o => o.status === 'PENDING').forEach(o => requiredTokens.add(o.token));
+
+    const toSubscribe: string[] = [];
+    const toUnsubscribe: string[] = [];
+
+    // Find new tokens to subscribe
+    requiredTokens.forEach(t => {
+      if (!activeTokens.current.has(t)) {
+        toSubscribe.push(t);
+        activeTokens.current.add(t);
+      }
+    });
+
+    // Find old tokens to unsubscribe
+    activeTokens.current.forEach(t => {
+      if (!requiredTokens.has(t)) {
+        toUnsubscribe.push(t);
+        activeTokens.current.delete(t);
+      }
+    });
+
+    if (toSubscribe.length > 0) {
+      wsRef.current.send(JSON.stringify({ type: 'subscribe', tokens: toSubscribe }));
+    }
+    if (toUnsubscribe.length > 0) {
+      wsRef.current.send(JSON.stringify({ type: 'unsubscribe', tokens: toUnsubscribe }));
+    }
+  }, [stocks, positions, orders]);
 
   return { stocks, setStocks, subscribe };
 };

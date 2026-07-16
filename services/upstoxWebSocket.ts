@@ -124,3 +124,17 @@ export const subscribeToInstruments = (instrumentKeys: string[]) => {
     console.log(`Subscribed dynamically to ${instrumentKeys.length} instruments.`);
   }
 };
+
+export const unsubscribeFromInstruments = (instrumentKeys: string[]) => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const unsubscribePayload = {
+      guid: 'upstox-feed',
+      method: 'unsub',
+      data: {
+        instrumentKeys,
+      },
+    };
+    ws.send(Buffer.from(JSON.stringify(unsubscribePayload)));
+    console.log(`Unsubscribed dynamically from ${instrumentKeys.length} instruments.`);
+  }
+};

@@ -6,7 +6,7 @@ import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import { logTick } from './utils/logger';
-import { initUpstoxWS, closeUpstoxWS, subscribeToInstruments } from './services/upstoxWebSocket';
+import { initUpstoxWS, closeUpstoxWS, subscribeToInstruments, unsubscribeFromInstruments } from './services/upstoxWebSocket';
 import zlib from 'zlib';
 import bcrypt from 'bcryptjs';
 import { getUsers, getUserById, getUserByUsername, addUser, updateUser, deleteUser, executeTradeTransaction, getTradesForUser, calculatePositionsForUser, getRMSLimits, addRMSLimit, updateRMSLimit, deleteRMSLimit, cleanupClosedPositions, cleanupOldTradeHistory, createOrder, getOrdersForUser, updateOrderStatus, modifyOrder, cancelOrder, getPendingLimitOrders, getBlockedMarginForUser, getExpiringOpenPositions, ensureDefaultWatchlistTable, seedDefaultWatchlist, getDefaultWatchlistItems, updateDefaultWatchlistToken } from './services/userStore';
@@ -1484,7 +1484,8 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
-let configuredUpstoxKeys = new Set<string>();
+let configuredUpstoxKeys = new Map<string, number>();
+const clientSubscriptions = new Map<WebSocket, Set<string>>();
 
 // Known index instruments that may not exist in the Upstox CSV
 const INDEX_INSTRUMENTS: Record<string, { token: string; upstox_key: string }> = {
@@ -1575,22 +1576,78 @@ wss.on('connection', (ws) => {
       if (data.type === 'subscribe') {
         const tokens: string[] = data.tokens || [];
         const keysToSub: string[] = [];
+        let clientSubs = clientSubscriptions.get(ws);
+        if (!clientSubs) {
+          clientSubs = new Set<string>();
+          clientSubscriptions.set(ws, clientSubs);
+        }
+
         for (const token of tokens) {
           const scrip = token.includes('|')
             ? globalInstruments.find(s => s.upstox_key === token)
             : globalInstruments.find(s => s.token === token);
           const upstoxKey = scrip?.upstox_key || INDEX_INSTRUMENTS[token]?.upstox_key;
-          if (upstoxKey && !configuredUpstoxKeys.has(upstoxKey)) {
-            keysToSub.push(upstoxKey);
-            configuredUpstoxKeys.add(upstoxKey);
+          if (upstoxKey && !clientSubs.has(upstoxKey)) {
+            clientSubs.add(upstoxKey);
+            const currentCount = configuredUpstoxKeys.get(upstoxKey) || 0;
+            if (currentCount === 0) {
+              keysToSub.push(upstoxKey);
+            }
+            configuredUpstoxKeys.set(upstoxKey, currentCount + 1);
           }
         }
         if (keysToSub.length > 0) {
           subscribeToInstruments(keysToSub);
         }
+      } else if (data.type === 'unsubscribe') {
+        const tokens: string[] = data.tokens || [];
+        const keysToUnsub: string[] = [];
+        const clientSubs = clientSubscriptions.get(ws);
+        
+        if (clientSubs) {
+          for (const token of tokens) {
+            const scrip = token.includes('|')
+              ? globalInstruments.find(s => s.upstox_key === token)
+              : globalInstruments.find(s => s.token === token);
+            const upstoxKey = scrip?.upstox_key || INDEX_INSTRUMENTS[token]?.upstox_key;
+            if (upstoxKey && clientSubs.has(upstoxKey)) {
+              clientSubs.delete(upstoxKey);
+              const currentCount = configuredUpstoxKeys.get(upstoxKey) || 0;
+              if (currentCount <= 1) {
+                keysToUnsub.push(upstoxKey);
+                configuredUpstoxKeys.delete(upstoxKey);
+              } else {
+                configuredUpstoxKeys.set(upstoxKey, currentCount - 1);
+              }
+            }
+          }
+          if (keysToUnsub.length > 0) {
+            unsubscribeFromInstruments(keysToUnsub);
+          }
+        }
       }
     } catch (e) {
       console.error('WS message error:', e);
+    }
+  });
+
+  ws.on('close', () => {
+    const clientSubs = clientSubscriptions.get(ws);
+    if (clientSubs) {
+      const keysToUnsub: string[] = [];
+      for (const upstoxKey of clientSubs) {
+        const currentCount = configuredUpstoxKeys.get(upstoxKey) || 0;
+        if (currentCount <= 1) {
+          keysToUnsub.push(upstoxKey);
+          configuredUpstoxKeys.delete(upstoxKey);
+        } else {
+          configuredUpstoxKeys.set(upstoxKey, currentCount - 1);
+        }
+      }
+      if (keysToUnsub.length > 0) {
+        unsubscribeFromInstruments(keysToUnsub);
+      }
+      clientSubscriptions.delete(ws);
     }
   });
 });

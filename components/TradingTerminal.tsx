@@ -49,14 +49,22 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
 
     const orderUpdateRef = React.useRef<(() => void) | null>(null);
 
-    const { stocks, setStocks, subscribe } = useMarketData(getInitialWatchlist(), handleRiskAlert, () => {
-        if (orderUpdateRef.current) orderUpdateRef.current();
-    });
-    const { indices } = useIndexData();
     const { trades, positions, orders, placeOrder, cancelOrder, modifyOrder, liveCapital, handleOrderUpdate } = useOrderManager(user.id);
 
     // Set the ref after useOrderManager is available
     orderUpdateRef.current = handleOrderUpdate;
+
+    const { stocks, setStocks, subscribe } = useMarketData(
+        getInitialWatchlist(), 
+        positions, 
+        orders,
+        handleRiskAlert, 
+        () => {
+            if (orderUpdateRef.current) orderUpdateRef.current();
+        }
+    );
+    
+    const { indices } = useIndexData();
 
     const [selectedIndex, setSelectedIndex] = useState<number>(-1);
     const [orderEntryAction, setOrderEntryAction] = useState<'BUY' | 'SELL'>('BUY');
@@ -115,29 +123,9 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
         }
     }, []);
 
-    // Ensure we are subscribed to all open positions even if they aren't directly visible in the Market Watch
-    useEffect(() => {
-        const missingTokens = positions
-            .filter(p => p.nQty !== 0 && !stocks.find(s => s.id === p.token))
-            .map(p => p.token);
-
-        if (missingTokens.length > 0) {
-            // Add skeleton objects to stocks array so they stream properly
-            const missingStocks: StockData[] = missingTokens.map(token => {
-                const pos = positions.find(p => p.token === token)!;
-                return {
-                    id: token,
-                    symbol: pos.scrip,
-                    exchange: pos.exch,
-                    dispName: pos.scrip,
-                    ltp: 0, change: 0, bQty: 0, bid: 0, ask: 0, aQty: 0,
-                    open: 0, high: 0, low: 0, pClose: 0, volume: 0
-                };
-            });
-            setStocks(prev => [...prev, ...missingStocks]);
-            subscribe(missingTokens);
-        }
-    }, [positions, stocks, setStocks, subscribe]);
+    // The useEffect that automatically added missingTokens has been removed.
+    // useMarketData now manages subscriptions for open positions in the background,
+    // so we don't need to force-inject them into the UI Watchlist (stocks) array.
 
     const handleSaveMarketWatch = () => {
         localStorage.setItem('saved_watchlist', JSON.stringify(stocks));
@@ -204,6 +192,8 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
     // Handle keyboard navigation
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.repeat) return; // Prevent OS auto-repeat from triggering infinite loops
+
             if (isOrderDialogOpen) {
                 if (e.key === 'Escape') setIsOrderDialogOpen(false);
                 return;
@@ -367,6 +357,18 @@ const TradingTerminal: React.FC<TradingTerminalProps> = ({ user, token, onLogout
                         setSelectedIndex(index);
                         setOrderEntryAction(action);
                         setIsOrderDialogOpen(true);
+                    }}
+                    onDeleteRow={(index) => {
+                        if (index !== -1 && stocks[index]) {
+                            const stockToRemove = stocks[index];
+                            generateLog(stockToRemove.dispName, "Watchlist removed");
+                            setStocks(prev => prev.filter((_, idx) => idx !== index));
+                            setSelectedIndex(prev => {
+                                if (prev > 0 && prev >= stocks.length - 1) return prev - 1;
+                                if (stocks.length <= 1) return -1;
+                                return prev;
+                            });
+                        }
                     }}
                 />
             </div>

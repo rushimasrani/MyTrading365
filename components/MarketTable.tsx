@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { StockData } from '../types';
 
 const HighlightCell: React.FC<{ value: number | undefined; className?: string }> = ({ value, className = '' }) => {
@@ -49,6 +50,7 @@ interface MarketTableProps {
   onSelectRow: (index: number) => void;
   onDoubleClickRow?: (index: number) => void;
   onOrderAction?: (index: number, action: 'BUY' | 'SELL') => void;
+  onDeleteRow?: (index: number) => void;
 }
 
 const MarketTable: React.FC<MarketTableProps> = ({
@@ -56,7 +58,8 @@ const MarketTable: React.FC<MarketTableProps> = ({
   selectedIndex,
   onSelectRow,
   onDoubleClickRow,
-  onOrderAction
+  onOrderAction,
+  onDeleteRow
 }) => {
   const tableRef = useRef<HTMLDivElement>(null);
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
@@ -121,6 +124,12 @@ const MarketTable: React.FC<MarketTableProps> = ({
                         className="bg-red-600/90 active:bg-red-600 border border-red-500 rounded text-white text-[12px] font-bold w-[46px] h-[34px] flex items-center justify-center shadow-sm"
                       >
                         S
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteRow?.(index); }}
+                        className="bg-gray-700/90 active:bg-gray-600 border border-gray-500 rounded text-white text-[12px] font-bold w-[34px] h-[34px] flex items-center justify-center shadow-sm"
+                      >
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </div>

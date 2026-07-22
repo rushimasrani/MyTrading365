@@ -46,7 +46,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, token, delega
     const [viewedClientId, setViewedClientId] = useState<string | null>(null);
     const [clientPositions, setClientPositions] = useState<NetPositionRecord[]>([]);
 
-    const { stocks, setStocks, subscribe } = useMarketData([]);
+    const { stocks, setStocks, subscribe } = useMarketData([], [], []);
 
     useEffect(() => {
         fetchClients();

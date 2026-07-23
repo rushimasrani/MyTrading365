@@ -27,7 +27,7 @@ export const initUpstoxWS = async (
       'com.upstox.marketdatafeederv3udapi.rpc.proto.FeedResponse'
     );
 
-    console.log('Authorizing Upstox WebSocket...');
+    console.log(`Authorizing Upstox WebSocket... Token prefix: ${accessToken ? accessToken.substring(0, 15) + '...' : 'MISSING'}`);
 
     // 3️⃣ REST authorize call (MANDATORY)
     const authResp = await fetch(
@@ -36,7 +36,7 @@ export const initUpstoxWS = async (
         method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'Api-Version': '3.0',
+          'Api-Version': '2.0',
           'Accept': 'application/json'
         },
       }
